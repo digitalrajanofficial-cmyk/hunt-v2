@@ -45,6 +45,21 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - name: Set up Go
+        if: vars.ENABLE_RECON == 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+      - name: Install scoped recon tools
+        if: vars.ENABLE_RECON == 'true'
+        run: |
+          go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
+          go install github.com/projectdiscovery/dnsx/cmd/dnsx@latest
+          go install github.com/projectdiscovery/httpx/cmd/httpx@latest
+          echo "$HOME/go/bin" >> "$GITHUB_PATH"
+      - name: Run passive scoped recon
+        if: vars.ENABLE_RECON == 'true'
+        run: python -m hunt_pipeline run-recon --config config/programs/vr.json --output recon-input
       - name: Restore VR state
         uses: actions/cache/restore@v4
         with:
@@ -132,4 +147,5 @@ jobs:
             artifacts
             state
             data/hunt.sqlite
+            recon-input
           if-no-files-found: ignore

@@ -22,6 +22,7 @@ Reference implementation: [riteshekbote/threema-hunt](https://github.com/riteshe
 | Model reliability | Rotating model configuration | Rotational free-model pool, health cooldowns, timeout handling, and distinct second model |
 | SSRF resistance | Host allowlist probing | Scope validation, public-IP resolution, pinned connection address, private/metadata blocking, and redirect denial |
 | Repeat efficiency | Full context is repeatedly processed | Meaningful delta detection ignores observation timestamps and skips unchanged model calls |
+| Recon execution | Recon jobs and public-repository scans | Opt-in subfinder → scope filter → rate-limited dnsx/httpx producer with structured JSON output |
 | Publication | Automated issue synchronization | Model output cannot publish; only explicitly approved JSON can create an issue |
 | Target breadth | Many per-program repositories | One reusable pipeline with per-program configuration |
 
@@ -43,7 +44,7 @@ The reference prompt describes an eight-step analyst loop and a seven-question t
 
 ## Remaining parity work
 
-- Add passive subfinder, dnsx, httpx, and URL export producers.
+- Add scheduled public-source and URL-archive producers where the program explicitly permits them.
 - Add authenticated test-account workflows with secret-backed session handling.
 - Add OOB evidence adapters for approved test cases.
 - Add report quality metrics and payout feedback loops.

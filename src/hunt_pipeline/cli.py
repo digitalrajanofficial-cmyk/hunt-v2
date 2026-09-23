@@ -14,6 +14,7 @@ from .hypothesis import validate_generated_leads, write_prompt
 from .models import ValidationError, canonical
 from .model_pool import DEFAULT_FREE_POOL, parse_pool, run_model
 from .recon import import_recon, write_recon_output
+from .recon_runner import run_safe_recon
 from .scope import ScopePolicy, load_policy, validate_config
 
 
@@ -209,6 +210,13 @@ def run_model_pool(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_recon(args: argparse.Namespace) -> int:
+    policy = load_policy(args.config)
+    summary = run_safe_recon(policy, args.output, not args.skip_dns, not args.skip_http)
+    print(json.dumps(summary, indent=2))
+    return 0
+
+
 def run_import_recon(args: argparse.Namespace) -> int:
     policy = load_policy(args.config)
     base = json.loads(Path(args.base).read_text(encoding="utf-8")) if args.base else None
@@ -363,6 +371,13 @@ def build_parser():
     model_pool_parser.add_argument("--program", default="")
     model_pool_parser.add_argument("--attempts", default="artifacts/model-attempts")
     model_pool_parser.set_defaults(handler=run_model_pool)
+
+    run_recon_parser = subparsers.add_parser("run-recon")
+    run_recon_parser.add_argument("--config", required=True)
+    run_recon_parser.add_argument("--output", required=True)
+    run_recon_parser.add_argument("--skip-dns", action="store_true")
+    run_recon_parser.add_argument("--skip-http", action="store_true")
+    run_recon_parser.set_defaults(handler=run_recon)
 
     recon_parser = subparsers.add_parser("import-recon")
     recon_parser.add_argument("--config", required=True)
