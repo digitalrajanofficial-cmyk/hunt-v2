@@ -1,0 +1,133 @@
+name: Scope-safe hunt pipeline
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 */3 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scope-safe-hunt-pipeline
+  cancel-in-progress: true
+
+jobs:
+  pipeline:
+    if: ${{ vars.OPENCODE_VERSION != '' && vars.TRIAGE_MODEL != '' && secrets.OPENCODE_API_KEY != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      PYTHONPATH: src
+      OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION }}
+      TRIAGE_MODEL: ${{ vars.TRIAGE_MODEL }}
+      TRIAGE_MODEL_B: ${{ vars.TRIAGE_MODEL_B }}
+      OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Restore pipeline state
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            state
+            data
+          key: hunt-state-testfire-${{ github.run_id }}
+          restore-keys: |
+            hunt-state-testfire-
+      - name: Install OpenCode
+        run: npm install --global "opencode-ai@$OPENCODE_VERSION"
+      - name: Collect read-only inventory
+        run: |
+          mkdir -p state artifacts/generated data
+          if [ -f state/inventory.json ]; then
+            cp state/inventory.json state/previous-inventory.json
+          fi
+          python -m hunt_pipeline collect --config config/programs/testfire.json --input inputs/testfire.txt --output state/inventory.json --method GET --limit 1
+          if [ -f state/previous-inventory.json ]; then
+            python -m hunt_pipeline delta --previous state/previous-inventory.json --current state/inventory.json --output state/delta.json
+          else
+            python -c "import json; json.dump({'added': [], 'removed': [], 'changed': [], 'counts': {'added': 0, 'removed': 0, 'changed': 0}}, open('state/delta.json', 'w'), indent=2)"
+          fi
+      - name: Build hypothesis prompt
+        if: hashFiles('state/inventory.json') != ''
+        run: python -m hunt_pipeline hypothesis-prompt --inventory state/inventory.json --delta state/delta.json --output state/hypothesis-prompt.txt
+      - name: Generate evidence-bound candidates
+        if: hashFiles('state/hypothesis-prompt.txt') != ''
+        run: |
+          timeout --kill-after=30s 20m opencode run --agent hypothesis --model "$TRIAGE_MODEL" < state/hypothesis-prompt.txt > artifacts/hypothesis-output.txt
+          python -m hunt_pipeline extract-leads --input artifacts/hypothesis-output.txt --output artifacts/hypothesis-raw.json
+          python -m hunt_pipeline import-leads --input artifacts/hypothesis-raw.json --inventory state/inventory.json --delta state/delta.json --program testfire --output artifacts/generated/leads.json
+      - name: Ingest generated leads
+        if: hashFiles('artifacts/generated/leads.json') != ''
+        run: python -m hunt_pipeline --db data/hunt.sqlite ingest --config config/programs/testfire.json --input artifacts/generated/leads.json
+      - name: Build triage prompt
+        if: hashFiles('artifacts/generated/leads.json') != ''
+        run: |
+          if python -c "import json; raise SystemExit(0 if len(json.load(open('artifacts/generated/leads.json'))) else 1)"; then
+            python -m hunt_pipeline prompt --inbox artifacts/generated --output state/triage-prompt.txt
+          fi
+      - name: Run first triage model
+        if: hashFiles('state/triage-prompt.txt') != ''
+        run: |
+          timeout --kill-after=30s 20m opencode run --agent triage --model "$TRIAGE_MODEL" < state/triage-prompt.txt > artifacts/triage-a.txt
+          python -m hunt_pipeline extract-json --input artifacts/triage-a.txt --output artifacts/triage-a.raw.json
+          python -m hunt_pipeline annotate-model --input artifacts/triage-a.raw.json --model "$TRIAGE_MODEL" --output artifacts/triage-a.json
+      - name: Run second triage model
+        if: hashFiles('state/triage-prompt.txt') != '' && vars.TRIAGE_MODEL_B != ''
+        run: |
+          timeout --kill-after=30s 20m opencode run --agent triage --model "$TRIAGE_MODEL_B" < state/triage-prompt.txt > artifacts/triage-b.txt
+          python -m hunt_pipeline extract-json --input artifacts/triage-b.txt --output artifacts/triage-b.raw.json
+          python -m hunt_pipeline annotate-model --input artifacts/triage-b.raw.json --model "$TRIAGE_MODEL_B" --output artifacts/triage-b.json
+      - name: Build triage consensus
+        if: hashFiles('artifacts/triage-a.json') != '' && hashFiles('artifacts/triage-b.json') != ''
+        run: python -m hunt_pipeline consensus --input artifacts/triage-a.json --input artifacts/triage-b.json --output artifacts/triage-consensus.json
+      - name: Store consensus verdicts
+        if: hashFiles('artifacts/triage-consensus.json') != ''
+        run: python -m hunt_pipeline --db data/hunt.sqlite ingest-verdicts --input artifacts/triage-consensus.json --model consensus
+      - name: Store single-model fallback
+        if: hashFiles('artifacts/triage-consensus.json') == '' && hashFiles('artifacts/triage-a.json') != ''
+        run: python -m hunt_pipeline --db data/hunt.sqlite ingest-verdicts --input artifacts/triage-a.json --model "$TRIAGE_MODEL"
+      - name: Write review summary
+        if: always()
+        run: |
+          {
+            echo "## Hunt pipeline"
+            echo "- Program: testfire"
+            echo "- Human review required before any report or submission"
+            if [ -f state/inventory.json ]; then
+              python -c "import json; value=json.load(open('state/inventory.json')); print('- Assets observed:', len(value.get('assets', [])))" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            if [ -f artifacts/generated/leads.json ]; then
+              python -c "import json; value=json.load(open('artifacts/generated/leads.json')); print('- Candidate leads:', len(value))" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            echo "- Download the hunt-review artifact for evidence and model outputs"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Save pipeline state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            state
+            data
+          key: hunt-state-testfire-${{ github.run_id }}
+      - name: Upload review artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hunt-review-${{ github.run_id }}
+          path: |
+            artifacts
+            state
+            data/hunt.sqlite
+          if-no-files-found: ignore

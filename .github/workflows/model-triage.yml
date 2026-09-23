@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   triage:
-    if: ${{ vars.TRIAGE_MODEL != '' && vars.OPENCODE_VERSION != '' }}
+    if: ${{ vars.TRIAGE_MODEL != '' && vars.OPENCODE_VERSION != '' && secrets.OPENCODE_API_KEY != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -79,4 +79,5 @@ jobs:
             triage-a.json
             triage-b.json
             triage-consensus.json
+            data/hunt.sqlite
           if-no-files-found: ignore

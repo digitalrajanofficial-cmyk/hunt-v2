@@ -4,9 +4,11 @@ import re
 from pathlib import Path
 from typing import Any
 
+from .collector import collect, load_seed_urls, write_inventory
 from .consensus import load_model_result, write_consensus
 from .delta import write_diff
 from .ledger import Ledger
+from .hypothesis import validate_generated_leads, write_prompt
 from .models import ValidationError, canonical
 from .scope import ScopePolicy, load_policy, validate_config
 
@@ -164,6 +166,56 @@ def run_annotate(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_collect(args: argparse.Namespace) -> int:
+    policy = load_policy(args.config)
+    urls = load_seed_urls(args.input, args.limit)
+    inventory = collect(policy, urls, args.method, args.limit)
+    write_inventory(args.output, inventory)
+    successful = sum(1 for item in inventory["assets"] if item.get("status") is not None)
+    print(json.dumps({"assets": len(inventory["assets"]), "successful": successful, "output": args.output}, indent=2))
+    return 0 if successful == len(inventory["assets"]) else 1
+
+
+def run_hypothesis_prompt(args: argparse.Namespace) -> int:
+    inventory = json.loads(Path(args.inventory).read_text(encoding="utf-8"))
+    delta = json.loads(Path(args.delta).read_text(encoding="utf-8")) if args.delta else None
+    write_prompt(args.output, inventory, delta)
+    print(json.dumps({"output": args.output, "assets": len(inventory.get("assets", []))}))
+    return 0
+
+
+def run_extract_leads(args: argparse.Namespace) -> int:
+    text = Path(args.input).read_text(encoding="utf-8")
+    decoder = json.JSONDecoder()
+    candidates = []
+    for index, character in enumerate(text):
+        if character != "{":
+            continue
+        try:
+            value, _ = decoder.raw_decode(text[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict) and isinstance(value.get("leads"), list):
+            candidates.append(value)
+    if not candidates:
+        raise ValidationError("model output did not contain a leads object")
+    result = candidates[-1]
+    Path(args.output).write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps({"leads": len(result["leads"]), "output": args.output}))
+    return 0
+
+
+def run_import_leads(args: argparse.Namespace) -> int:
+    value = json.loads(Path(args.input).read_text(encoding="utf-8"))
+    inventory = json.loads(Path(args.inventory).read_text(encoding="utf-8"))
+    delta = json.loads(Path(args.delta).read_text(encoding="utf-8")) if args.delta else None
+    leads = validate_generated_leads(value, args.program, inventory, delta)
+    result = leads
+    Path(args.output).write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps({"leads": len(leads), "output": args.output}))
+    return 0
+
+
 def run_delta(args: argparse.Namespace) -> int:
     result = write_diff(args.previous, args.current, args.output)
     print(json.dumps({"counts": result["counts"], "output": args.output}, indent=2))
@@ -236,6 +288,33 @@ def build_parser():
     annotate_parser.add_argument("--model", required=True)
     annotate_parser.add_argument("--output", required=True)
     annotate_parser.set_defaults(handler=run_annotate)
+
+    collect_parser = subparsers.add_parser("collect")
+    collect_parser.add_argument("--config", required=True)
+    collect_parser.add_argument("--input", required=True)
+    collect_parser.add_argument("--output", required=True)
+    collect_parser.add_argument("--method", default="GET")
+    collect_parser.add_argument("--limit", type=int, default=100)
+    collect_parser.set_defaults(handler=run_collect)
+
+    hypothesis_prompt_parser = subparsers.add_parser("hypothesis-prompt")
+    hypothesis_prompt_parser.add_argument("--inventory", required=True)
+    hypothesis_prompt_parser.add_argument("--delta")
+    hypothesis_prompt_parser.add_argument("--output", required=True)
+    hypothesis_prompt_parser.set_defaults(handler=run_hypothesis_prompt)
+
+    extract_leads_parser = subparsers.add_parser("extract-leads")
+    extract_leads_parser.add_argument("--input", required=True)
+    extract_leads_parser.add_argument("--output", required=True)
+    extract_leads_parser.set_defaults(handler=run_extract_leads)
+
+    import_leads_parser = subparsers.add_parser("import-leads")
+    import_leads_parser.add_argument("--input", required=True)
+    import_leads_parser.add_argument("--inventory", required=True)
+    import_leads_parser.add_argument("--delta")
+    import_leads_parser.add_argument("--program", required=True)
+    import_leads_parser.add_argument("--output", required=True)
+    import_leads_parser.set_defaults(handler=run_import_leads)
 
     delta_parser = subparsers.add_parser("delta")
     delta_parser.add_argument("--previous", required=True)

@@ -10,3 +10,4 @@ data/*.sqlite
 data/*.sqlite-*
 inbox/
 artifacts/
+state/
