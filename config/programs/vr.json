@@ -1,0 +1,21 @@
+{
+  "program": "vr",
+  "display_name": "VR Group Bugcrowd target",
+  "enabled": true,
+  "authorization_reference": "https://bugcrowd.com/engagements/vr-group-mbb-og1",
+  "allowed_hosts": [
+    "www.vr.fi"
+  ],
+  "denied_hosts": [],
+  "allowed_methods": [
+    "HEAD"
+  ],
+  "allowed_ports": [
+    443
+  ],
+  "max_requests_per_second": 0.2,
+  "require_https": true,
+  "allow_redirects": false,
+  "probe_timeout_seconds": 10,
+  "max_response_bytes": 4096
+}

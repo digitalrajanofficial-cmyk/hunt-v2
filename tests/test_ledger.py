@@ -41,6 +41,15 @@ class LedgerTests(unittest.TestCase):
                         "evidence_ids": ["artifact-1"],
                         "impact": "Unauthorized data access.",
                         "safe_next_step": "Capture a read-only reproduction.",
+                        "gate": {
+                            "request_ready": True,
+                            "scope_confirmed": True,
+                            "reachable": True,
+                            "impact_proven": True,
+                            "novelty_checked": True,
+                            "not_rejected": True,
+                            "triager_accept": True,
+                        },
                     },
                     "test-model",
                 )

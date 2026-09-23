@@ -41,6 +41,18 @@ class ModelTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             validate_triage(value)
 
+    def test_valid_triage_requires_seven_question_gate(self):
+        value = {
+            "lead_id": "lead-example-1",
+            "verdict": "VALID",
+            "reason": "The response proves the behavior.",
+            "evidence_ids": ["artifact-1"],
+            "impact": "Unauthorized data access.",
+            "safe_next_step": "Repeat the read-only request and capture the response.",
+        }
+        with self.assertRaises(ValidationError):
+            validate_triage(value)
+
     def test_valid_triage(self):
         value = {
             "lead_id": "lead-example-1",
@@ -49,6 +61,15 @@ class ModelTests(unittest.TestCase):
             "evidence_ids": ["artifact-1"],
             "impact": "Unauthorized data access.",
             "safe_next_step": "Repeat the read-only request and capture the response.",
+            "gate": {
+                "request_ready": True,
+                "scope_confirmed": True,
+                "reachable": True,
+                "impact_proven": True,
+                "novelty_checked": True,
+                "not_rejected": True,
+                "triager_accept": True,
+            },
         }
         self.assertEqual(validate_triage(value)["verdict"], "VALID")
 

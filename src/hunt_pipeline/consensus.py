@@ -55,7 +55,7 @@ def combine_results(documents: list[tuple[str, list[dict[str, Any]]]], minimum_m
             "reason": "Consensus across " + ", ".join(sorted(models)) + ": " + first["reason"],
             "evidence_ids": sorted({item for _, vote in votes for item in vote["evidence_ids"]}),
         }
-        for field in ("impact", "safe_next_step", "cvss"):
+        for field in ("impact", "safe_next_step", "cvss", "gate"):
             if field in first:
                 result[field] = first[field]
         combined.append(validate_triage(result))

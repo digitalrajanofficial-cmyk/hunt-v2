@@ -32,6 +32,15 @@ Reference implementation: [riteshekbote/threema-hunt](https://github.com/riteshe
 - A free-model pool reduces cost but does not guarantee unlimited availability. Paid Zen models can be added to the same pool.
 - TLS errors are recorded and surfaced; certificate verification is never disabled.
 
+## Methodology hardening
+
+The reference prompt describes an eight-step analyst loop and a seven-question triage gate, but stores the result as model-generated Markdown. Hunt-v2 now makes the important parts executable:
+
+- Model-generated leads require priority scores, evidence needs, a read-only next action, and testability classification.
+- `VALID` triage requires all seven gate decisions: request ready, scope confirmed, reachable, impact proven, novelty checked, not rejected, and triager-acceptable.
+- Missing or false gate decisions are rejected by schema validation rather than being silently accepted.
+- The model pool retries invalid output and failed free models before the lead is discarded.
+
 ## Remaining parity work
 
 - Add passive subfinder, dnsx, httpx, and URL export producers.

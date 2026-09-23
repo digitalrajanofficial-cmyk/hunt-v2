@@ -12,6 +12,15 @@ class ConsensusTests(unittest.TestCase):
             "evidence_ids": ["artifact-1"] if value == "VALID" else [],
             "impact": "Data exposure" if value == "VALID" else None,
             "safe_next_step": "Repeat read-only request" if value == "VALID" else None,
+            "gate": {
+                "request_ready": True,
+                "scope_confirmed": True,
+                "reachable": True,
+                "impact_proven": True,
+                "novelty_checked": True,
+                "not_rejected": True,
+                "triager_accept": True,
+            } if value == "VALID" else None,
         }
 
     def clean(self, result):

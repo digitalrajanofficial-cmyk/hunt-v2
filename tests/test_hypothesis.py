@@ -28,6 +28,11 @@ class HypothesisTests(unittest.TestCase):
             "reasoning": "The response metadata was observed.",
             "impact": "No impact is asserted yet.",
             "evidence": [{"kind": "response", "reference": "asset-1"}],
+            "priority_score": 20,
+            "priority_axes": {"impact": 2, "confidence": 3},
+            "evidence_needed": "A second read-only observation.",
+            "next_action": "RAG: compare the response metadata with known framework behavior.",
+            "testability": "PASSIVE",
         }
 
     def test_valid_lead(self):
