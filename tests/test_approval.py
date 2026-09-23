@@ -10,7 +10,7 @@ from hunt_pipeline.approval import load_approvals, publish_approvals, validate_a
 class ApprovalTests(unittest.TestCase):
     def approval(self):
         return {
-            "program": "testfire",
+            "program": "example",
             "lead_id": "lead_example-1",
             "approved": True,
             "title": "Approved lead",
@@ -20,7 +20,7 @@ class ApprovalTests(unittest.TestCase):
         }
 
     def test_validation(self):
-        self.assertEqual(validate_approval(self.approval())["program"], "testfire")
+        self.assertEqual(validate_approval(self.approval())["program"], "example")
 
     def test_dry_run_does_not_call_github(self):
         with tempfile.TemporaryDirectory() as directory:
