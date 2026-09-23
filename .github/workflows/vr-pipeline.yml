@@ -60,16 +60,34 @@ jobs:
           go install github.com/tomnomnom/waybackurls@latest
           python -m pip install --disable-pip-version-check --no-cache-dir "waymore==8.9"
           echo "$HOME/go/bin" >> "$GITHUB_PATH"
-      - name: Install optional active recon tools
+      - name: Install optional active Go tools
         if: vars.ENABLE_ACTIVE_RECON == 'true'
         run: |
           go install github.com/projectdiscovery/katana/cmd/katana@latest
           go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
           go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest
           go install github.com/ffuf/ffuf/v2@latest
+          go install github.com/tomnomnom/gf@latest
+          go install github.com/devploit/nomore403@latest
           go install github.com/zricethezav/gitleaks/v8@latest
           go install github.com/trufflesecurity/trufflehog/v3@latest
           echo "$HOME/go/bin" >> "$GITHUB_PATH"
+      - name: Install optional active Python tools
+        if: vars.ENABLE_ACTIVE_RECON == 'true'
+        run: |
+          git clone --depth 1 --branch 1.4.3 https://github.com/r0oth3x49/ghauri.git "$RUNNER_TEMP/ghauri"
+          python -m pip install --disable-pip-version-check --no-cache-dir "$RUNNER_TEMP/ghauri"
+          git clone --depth 1 https://github.com/MichaelStott/CRLF-Injection-Scanner.git "$RUNNER_TEMP/crlf-scanner"
+          python -m pip install --disable-pip-version-check --no-cache-dir "$RUNNER_TEMP/crlf-scanner"
+      - name: Install optional SQLMap checkout
+        if: vars.ENABLE_ACTIVE_RECON == 'true'
+        run: |
+          git clone --depth 1 https://github.com/sqlmapproject/sqlmap.git "$RUNNER_TEMP/sqlmap"
+          mkdir -p "$RUNNER_TEMP/bin"
+          printf '#!/bin/sh\nexec python "%s/sqlmap.py" "$@"\n' "$RUNNER_TEMP" > "$RUNNER_TEMP/bin/sqlmap"
+          chmod +x "$RUNNER_TEMP/bin/sqlmap"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          echo "SQLMAP_HOME=$RUNNER_TEMP/sqlmap" >> "$GITHUB_ENV"
       - name: Run passive scoped recon
         if: vars.ENABLE_RECON == 'true'
         run: python -m hunt_pipeline run-recon --config config/programs/vr.json --output recon-input --passive-urls

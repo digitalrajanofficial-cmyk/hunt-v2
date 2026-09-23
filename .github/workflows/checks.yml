@@ -28,3 +28,5 @@ jobs:
           for config in config/programs/*.json; do
             python -m hunt_pipeline validate-config --config "$config"
           done
+      - name: Validate recon tool manifest
+        run: python -m json.tool config/recon-tools.json >/dev/null
