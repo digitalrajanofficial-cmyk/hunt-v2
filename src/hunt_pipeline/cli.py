@@ -16,6 +16,7 @@ from .model_pool import DEFAULT_FREE_POOL, parse_pool, run_model
 from .recon import import_recon, write_recon_output
 from .recon_runner import run_safe_recon
 from .scope import ScopePolicy, load_policy, validate_config
+from .source_recon import build_source_prompt, load_source_config, run_source_recon
 
 
 def read_records(path: str) -> list[dict[str, Any]]:
@@ -203,6 +204,7 @@ def run_model_pool(args: argparse.Namespace) -> int:
         health_path=args.health,
         inventory_path=args.inventory,
         delta_path=args.delta,
+        source_findings_path=args.source_findings,
         program=args.program,
         attempt_dir=args.attempts,
     )
@@ -214,6 +216,21 @@ def run_recon(args: argparse.Namespace) -> int:
     policy = load_policy(args.config)
     summary = run_safe_recon(policy, args.output, not args.skip_dns, not args.skip_http, args.passive_urls)
     print(json.dumps(summary, indent=2))
+    return 0
+
+
+def run_source_recon_command(args: argparse.Namespace) -> int:
+    config = load_source_config(args.config)
+    summary = run_source_recon(config, args.output, os.environ.get("GITHUB_TOKEN", ""))
+    print(json.dumps(summary, indent=2))
+    return 0
+
+
+def run_source_prompt(args: argparse.Namespace) -> int:
+    findings = json.loads(Path(args.input).read_text(encoding="utf-8"))
+    prompt = build_source_prompt(findings, args.program or str(findings.get("program", "source")))
+    Path(args.output).write_text(prompt, encoding="utf-8")
+    print(json.dumps({"findings": len(findings.get("findings", [])), "output": args.output}))
     return 0
 
 
@@ -358,7 +375,7 @@ def build_parser():
 
     model_pool_parser = subparsers.add_parser("model-run")
     model_pool_parser.add_argument("--agent", required=True)
-    model_pool_parser.add_argument("--mode", choices=("hypothesis", "triage"), required=True)
+    model_pool_parser.add_argument("--mode", choices=("hypothesis", "triage", "source"), required=True)
     model_pool_parser.add_argument("--prompt", required=True)
     model_pool_parser.add_argument("--output", required=True)
     model_pool_parser.add_argument("--pool", default="")
@@ -368,6 +385,7 @@ def build_parser():
     model_pool_parser.add_argument("--health", default="state/model-health.json")
     model_pool_parser.add_argument("--inventory")
     model_pool_parser.add_argument("--delta")
+    model_pool_parser.add_argument("--source-findings")
     model_pool_parser.add_argument("--program", default="")
     model_pool_parser.add_argument("--attempts", default="artifacts/model-attempts")
     model_pool_parser.set_defaults(handler=run_model_pool)
@@ -379,6 +397,17 @@ def build_parser():
     run_recon_parser.add_argument("--skip-http", action="store_true")
     run_recon_parser.add_argument("--passive-urls", action="store_true")
     run_recon_parser.set_defaults(handler=run_recon)
+
+    source_recon_parser = subparsers.add_parser("source-recon")
+    source_recon_parser.add_argument("--config", required=True)
+    source_recon_parser.add_argument("--output", required=True)
+    source_recon_parser.set_defaults(handler=run_source_recon_command)
+
+    source_prompt_parser = subparsers.add_parser("source-prompt")
+    source_prompt_parser.add_argument("--input", required=True)
+    source_prompt_parser.add_argument("--program", default="")
+    source_prompt_parser.add_argument("--output", required=True)
+    source_prompt_parser.set_defaults(handler=run_source_prompt)
 
     recon_parser = subparsers.add_parser("import-recon")
     recon_parser.add_argument("--config", required=True)

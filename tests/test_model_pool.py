@@ -18,6 +18,39 @@ class ModelPoolTests(unittest.TestCase):
         self.assertEqual(pool, ["a", "b", "c"])
         self.assertEqual(len(DEFAULT_FREE_POOL), 8)
 
+    def test_source_analysis_uses_sanitized_finding_ids(self):
+        valid = {
+            "findings": [
+                {
+                    "finding_id": "abc123",
+                    "classification": "NOISE",
+                    "report_candidate": False,
+                    "reason": "Example value.",
+                    "safe_next_step": "REVIEW",
+                }
+            ]
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            prompt = root / "prompt.txt"
+            findings = root / "findings.json"
+            output = root / "out.json"
+            prompt.write_text("prompt", encoding="utf-8")
+            findings.write_text(json.dumps({"findings": [{"id": "abc123"}]}), encoding="utf-8")
+            response = subprocess.CompletedProcess([], 0, json.dumps(valid), "")
+            with patch("hunt_pipeline.model_pool.subprocess.run", return_value=response):
+                selected = run_model(
+                    agent="source",
+                    mode="source",
+                    prompt_path=str(prompt),
+                    source_findings_path=str(findings),
+                    output_path=str(output),
+                    pool=["model-a"],
+                    health_path=str(root / "health.json"),
+                )
+            self.assertEqual(selected, "model-a")
+            self.assertEqual(json.loads(output.read_text())["findings"][0]["finding_id"], "abc123")
+
     def test_failed_model_falls_back(self):
         valid = {
             "results": [

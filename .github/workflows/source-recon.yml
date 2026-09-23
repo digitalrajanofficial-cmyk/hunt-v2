@@ -1,0 +1,93 @@
+name: Public source recon
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "41 */6 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-source-recon
+  cancel-in-progress: true
+
+jobs:
+  source:
+    if: ${{ vars.ENABLE_SOURCE_RECON == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      PYTHONPATH: src
+      OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION }}
+      FREE_MODEL_POOL: ${{ vars.FREE_MODEL_POOL }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Enumerate and scan authorized public repositories
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p artifacts/source-recon
+          python -m hunt_pipeline source-recon --config config/source-recon.json --output artifacts/source-recon
+      - name: Check source findings
+        id: findings
+        run: |
+          if python -c "import json; raise SystemExit(0 if json.load(open('artifacts/source-recon/source-findings.json')).get('findings') else 1)"; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Check model configuration
+        id: model-config
+        if: steps.findings.outputs.available == 'true'
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+        run: |
+          if [ -n "$OPENCODE_API_KEY" ] && [ -n "$OPENCODE_VERSION" ] && [ -n "$FREE_MODEL_POOL" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install OpenCode
+        if: steps.findings.outputs.available == 'true' && steps.model-config.outputs.enabled == 'true'
+        run: npm install --global "opencode-ai@$OPENCODE_VERSION"
+      - name: Build sanitized source-analysis prompt
+        if: steps.findings.outputs.available == 'true' && steps.model-config.outputs.enabled == 'true'
+        run: python -m hunt_pipeline source-prompt --input artifacts/source-recon/source-findings.json --output artifacts/source-recon/source-prompt.txt
+      - name: Run source-analysis model
+        if: hashFiles('artifacts/source-recon/source-prompt.txt') != '' && steps.model-config.outputs.enabled == 'true'
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+        run: |
+          python -m hunt_pipeline model-run --agent source --mode source --prompt artifacts/source-recon/source-prompt.txt --source-findings artifacts/source-recon/source-findings.json --output artifacts/source-recon/source-analysis.json --rotation "$GITHUB_RUN_NUMBER" --attempts artifacts/source-recon/model-attempts
+      - name: Write source summary
+        if: always()
+        run: |
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          from pathlib import Path
+          summary = json.loads(Path('artifacts/source-recon/summary.json').read_text(encoding='utf-8'))
+          print('### Public source recon')
+          print(f"- Enabled: {summary.get('enabled', False)}")
+          print(f"- Repositories: {len(summary.get('repositories', []))}")
+          print(f"- Files scanned: {summary.get('scanned_files', 0)}")
+          print(f"- Sanitized findings: {len(summary.get('findings', []))}")
+          PY
+      - name: Upload source recon artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-recon-${{ github.run_id }}
+          path: artifacts/source-recon
+          if-no-files-found: warn

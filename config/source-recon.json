@@ -1,0 +1,16 @@
+{
+  "program": "vr",
+  "enabled": false,
+  "authorization_reference": "Configure an explicitly authorized public-source scope before enabling",
+  "github_orgs": [],
+  "github_repos": [],
+  "include_archived": false,
+  "include_forks": false,
+  "allowed_languages": [],
+  "max_repos_per_org": 15,
+  "max_total_repos": 30,
+  "max_repo_size_kb": 200000,
+  "max_files_per_repo": 10000,
+  "max_file_bytes": 200000,
+  "max_findings_per_repo": 200
+}

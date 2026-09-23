@@ -22,9 +22,17 @@ Reference implementation: [riteshekbote/threema-hunt](https://github.com/riteshe
 | Model reliability | Rotating model configuration | Rotational free-model pool, health cooldowns, timeout handling, and distinct second model |
 | SSRF resistance | Host allowlist probing | Scope validation, public-IP resolution, pinned connection address, private/metadata blocking, and redirect denial |
 | Repeat efficiency | Full context is repeatedly processed | Meaningful delta detection ignores observation timestamps and skips unchanged model calls |
-| Recon execution | Recon jobs and public-repository scans | Opt-in subfinder → scope filter → rate-limited dnsx/httpx producer with structured JSON output |
+| Recon execution | Recon jobs and public-repository scans | Opt-in subfinder → scope filter → rate-limited dnsx/httpx producer plus allowlisted, sanitized GitHub source-recon workflow |
 | Publication | Automated issue synchronization | Model output cannot publish; only explicitly approved JSON can create an issue |
 | Target breadth | Many per-program repositories | One reusable pipeline with per-program configuration |
+
+## Public-source recon parity
+
+- `source-recon.yml` provides an opt-in scheduled/manual workflow for explicitly allowlisted GitHub organizations and repositories.
+- The scanner enumerates public repositories, applies size/language/archive/fork limits, performs bounded shallow clones, and scans source/config files for secret and endpoint indicators.
+- Secret matches are represented only by a SHA-256 digest and `[REDACTED]`; URL query strings, fragments, and embedded credentials are removed before artifacts or model prompts.
+- `source` model analysis is schema-validated and cannot publish findings directly.
+- The checked-in configuration is disabled until an authorized organization or repository list is supplied; set `ENABLE_SOURCE_RECON=true` only after that configuration is reviewed.
 
 ## Deliberate trade-offs
 
@@ -44,8 +52,9 @@ The reference prompt describes an eight-step analyst loop and a seven-question t
 
 ## Remaining parity work
 
-- Add scheduled public-source and URL-archive producers where the program explicitly permits them.
 - Add authenticated test-account workflows with secret-backed session handling.
 - Add OOB evidence adapters for approved test cases.
 - Add report quality metrics and payout feedback loops.
 - Add multi-program matrix execution from one configuration set.
+- Add automatic read-only verification for model-proposed endpoints.
+- Add cross-cycle knowledge/learning aggregation without exposing raw secrets.

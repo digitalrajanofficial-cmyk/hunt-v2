@@ -7,6 +7,7 @@ from typing import Any
 
 from .hypothesis import validate_generated_leads
 from .models import validate_triage
+from .source_recon import validate_source_analysis
 
 DEFAULT_FREE_POOL = [
     "opencode/big-pickle",
@@ -100,17 +101,21 @@ def run_model(
     health_path: str = "state/model-health.json",
     inventory_path: str | None = None,
     delta_path: str | None = None,
+    source_findings_path: str | None = None,
     program: str = "",
     attempt_dir: str | None = None,
     cooldown_seconds: int = 3600,
 ) -> str:
-    if mode not in {"hypothesis", "triage"}:
-        raise ValueError("mode must be hypothesis or triage")
+    if mode not in {"hypothesis", "triage", "source"}:
+        raise ValueError("mode must be hypothesis, triage, or source")
     if mode == "hypothesis" and (not inventory_path or not program):
         raise ValueError("hypothesis mode requires inventory_path and program")
+    if mode == "source" and not source_findings_path:
+        raise ValueError("source mode requires source_findings_path")
     prompt = Path(prompt_path).read_text(encoding="utf-8")
     inventory = json.loads(Path(inventory_path).read_text(encoding="utf-8")) if inventory_path else None
     delta = json.loads(Path(delta_path).read_text(encoding="utf-8")) if delta_path else None
+    source_findings = json.loads(Path(source_findings_path).read_text(encoding="utf-8")) if source_findings_path else None
     health = load_health(health_path)
     failures = health.get("failures", {}) if isinstance(health.get("failures", {}), dict) else {}
     excluded = excluded or set()
@@ -138,7 +143,7 @@ def run_model(
             errors.append(f"{model}: exit {completed.returncode}")
             failures[model] = time.time()
             continue
-        key = "leads" if mode == "hypothesis" else "results"
+        key = "leads" if mode == "hypothesis" else "findings" if mode == "source" else "results"
         objects = extract_objects(completed.stdout, key)
         if not objects:
             errors.append(f"{model}: no {key} JSON")
@@ -149,6 +154,9 @@ def run_model(
             if mode == "hypothesis":
                 leads = validate_generated_leads(candidate, program, inventory, delta)
                 result = {"model": model, "leads": leads}
+            elif mode == "source":
+                findings = validate_source_analysis(candidate, source_findings or {})
+                result = {"model": model, "findings": findings}
             else:
                 results = [validate_triage(item) for item in candidate["results"]]
                 result = {"model": model, "results": results}
