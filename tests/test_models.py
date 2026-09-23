@@ -25,6 +25,12 @@ class ModelTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             validate_lead(value)
 
+    def test_lead_rejects_string_confidence(self):
+        value = self.lead()
+        value["confidence"] = "40"
+        with self.assertRaises(ValidationError):
+            validate_lead(value)
+
     def test_valid_triage_requires_evidence(self):
         value = {
             "lead_id": "lead-example-1",

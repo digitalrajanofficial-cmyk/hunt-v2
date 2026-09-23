@@ -59,7 +59,7 @@ def validate_lead(value: Any) -> dict[str, Any]:
         _string(lead[field], f"lead.{field}")
     if not ID_PATTERN.fullmatch(lead["program"]):
         raise ValidationError("lead.program has an invalid format")
-    if not 0 <= lead["confidence"] <= 100 or isinstance(lead["confidence"], bool):
+    if isinstance(lead["confidence"], bool) or not isinstance(lead["confidence"], int) or not 0 <= lead["confidence"] <= 100:
         raise ValidationError("lead.confidence must be an integer from 0 to 100")
     if lead["source"] not in {"recon", "manual", "model"}:
         raise ValidationError("lead.source must be recon, manual, or model")

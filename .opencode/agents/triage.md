@@ -1,7 +1,7 @@
 ---
 name: triage
 description: Strict evidence-first triage agent for untrusted lead records
-mode: subagent
+mode: primary
 permission:
   read: deny
   bash: deny

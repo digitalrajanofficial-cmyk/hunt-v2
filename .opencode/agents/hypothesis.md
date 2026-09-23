@@ -1,7 +1,7 @@
 ---
 name: hypothesis
 description: Generate evidence-bound security hypotheses from passive inventory metadata
-mode: subagent
+mode: primary
 permission:
   read: deny
   bash: deny
