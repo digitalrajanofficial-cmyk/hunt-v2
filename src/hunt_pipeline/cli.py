@@ -172,8 +172,9 @@ def run_collect(args: argparse.Namespace) -> int:
     inventory = collect(policy, urls, args.method, args.limit)
     write_inventory(args.output, inventory)
     successful = sum(1 for item in inventory["assets"] if item.get("status") is not None)
-    print(json.dumps({"assets": len(inventory["assets"]), "successful": successful, "output": args.output}, indent=2))
-    return 0 if successful == len(inventory["assets"]) else 1
+    failed = len(inventory["assets"]) - successful
+    print(json.dumps({"assets": len(inventory["assets"]), "successful": successful, "failed": failed, "output": args.output}, indent=2))
+    return 1 if args.fail_on_error and failed else 0
 
 
 def run_hypothesis_prompt(args: argparse.Namespace) -> int:
@@ -295,6 +296,7 @@ def build_parser():
     collect_parser.add_argument("--output", required=True)
     collect_parser.add_argument("--method", default="GET")
     collect_parser.add_argument("--limit", type=int, default=100)
+    collect_parser.add_argument("--fail-on-error", action="store_true")
     collect_parser.set_defaults(handler=run_collect)
 
     hypothesis_prompt_parser = subparsers.add_parser("hypothesis-prompt")
