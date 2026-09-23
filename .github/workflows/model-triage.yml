@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   triage:
-    if: ${{ vars.TRIAGE_MODEL != '' && vars.OPENCODE_VERSION != '' && secrets.OPENCODE_API_KEY != '' }}
+    if: ${{ vars.TRIAGE_MODEL != '' && vars.OPENCODE_VERSION != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -26,6 +26,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Check model configuration
+        id: model-config
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+        run: |
+          if [ -n "$OPENCODE_API_KEY" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -47,13 +57,13 @@ jobs:
           fi
           python -m hunt_pipeline prompt --inbox inbox --output triage-prompt.txt
       - name: Run first isolated triage agent
-        if: hashFiles('triage-prompt.txt') != ''
+        if: hashFiles('triage-prompt.txt') != '' && steps.model-config.outputs.enabled == 'true'
         run: |
           timeout --kill-after=30s 20m opencode run --agent triage --model "$TRIAGE_MODEL" < triage-prompt.txt > triage-a.txt
           python -m hunt_pipeline extract-json --input triage-a.txt --output triage-a.raw.json
           python -m hunt_pipeline annotate-model --input triage-a.raw.json --model "$TRIAGE_MODEL" --output triage-a.json
       - name: Run second isolated triage agent
-        if: hashFiles('triage-prompt.txt') != '' && vars.TRIAGE_MODEL_B != ''
+        if: hashFiles('triage-prompt.txt') != '' && vars.TRIAGE_MODEL_B != '' && steps.model-config.outputs.enabled == 'true'
         run: |
           timeout --kill-after=30s 20m opencode run --agent triage --model "$TRIAGE_MODEL_B" < triage-prompt.txt > triage-b.txt
           python -m hunt_pipeline extract-json --input triage-b.txt --output triage-b.raw.json
