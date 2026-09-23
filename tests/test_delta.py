@@ -11,6 +11,12 @@ class DeltaTests(unittest.TestCase):
         self.assertEqual(result["counts"], {"added": 1, "removed": 1, "changed": 1})
         self.assertEqual(result["changed"][0]["key"], "a")
 
+    def test_ignores_observation_timestamp(self):
+        previous = [{"id": "a", "status": 200, "observed_at": "old"}]
+        current = [{"id": "a", "status": 200, "observed_at": "new"}]
+        result = diff_inventory(previous, current)
+        self.assertEqual(result["counts"], {"added": 0, "removed": 0, "changed": 0})
+
 
 if __name__ == "__main__":
     unittest.main()

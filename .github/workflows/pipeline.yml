@@ -69,11 +69,19 @@ jobs:
           else
             python -c "import json; json.dump({'added': [], 'removed': [], 'changed': [], 'counts': {'added': 0, 'removed': 0, 'changed': 0}}, open('state/delta.json', 'w'), indent=2)"
           fi
+      - name: Check for meaningful changes
+        id: changes
+        run: |
+          if [ ! -f state/previous-inventory.json ] || python -c "import json; value=json.load(open('state/delta.json')); raise SystemExit(0 if any(value['counts'].values()) else 1)"; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Build hypothesis prompt
         if: hashFiles('state/inventory.json') != ''
         run: python -m hunt_pipeline hypothesis-prompt --inventory state/inventory.json --delta state/delta.json --output state/hypothesis-prompt.txt
       - name: Generate evidence-bound candidates
-        if: hashFiles('state/hypothesis-prompt.txt') != '' && steps.model-config.outputs.enabled == 'true'
+        if: hashFiles('state/hypothesis-prompt.txt') != '' && steps.changes.outputs.changed == 'true' && steps.model-config.outputs.enabled == 'true'
         run: |
           timeout --kill-after=30s 20m opencode run --agent hypothesis --model "$TRIAGE_MODEL" < state/hypothesis-prompt.txt > artifacts/hypothesis-output.txt
           python -m hunt_pipeline extract-leads --input artifacts/hypothesis-output.txt --output artifacts/hypothesis-raw.json

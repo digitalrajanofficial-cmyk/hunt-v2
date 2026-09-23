@@ -5,6 +5,12 @@ from typing import Any
 
 from .models import canonical
 
+VOLATILE_FIELDS = {"observed_at"}
+
+
+def stable_record(item: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in item.items() if key not in VOLATILE_FIELDS}
+
 
 def load_inventory(path: str) -> list[dict[str, Any]]:
     value = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -30,7 +36,7 @@ def diff_inventory(previous: list[dict[str, Any]], current: list[dict[str, Any]]
     changed = [
         {"key": key, "before": old[key], "after": new[key]}
         for key in sorted(old.keys() & new.keys())
-        if canonical(old[key]) != canonical(new[key])
+        if canonical(stable_record(old[key])) != canonical(stable_record(new[key]))
     ]
     return {
         "added": added,
