@@ -14,14 +14,13 @@ concurrency:
 
 jobs:
   pipeline:
-    if: ${{ vars.OPENCODE_VERSION != '' && vars.TRIAGE_MODEL != '' }}
+    if: ${{ vars.OPENCODE_VERSION != '' && vars.FREE_MODEL_POOL != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
       PYTHONPATH: src
       OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION }}
-      TRIAGE_MODEL: ${{ vars.TRIAGE_MODEL }}
-      TRIAGE_MODEL_B: ${{ vars.TRIAGE_MODEL_B }}
+      FREE_MODEL_POOL: ${{ vars.FREE_MODEL_POOL }}
       OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
     steps:
       - name: Checkout
@@ -83,8 +82,7 @@ jobs:
       - name: Generate evidence-bound candidates
         if: hashFiles('state/hypothesis-prompt.txt') != '' && steps.changes.outputs.changed == 'true' && steps.model-config.outputs.enabled == 'true'
         run: |
-          timeout --kill-after=30s 20m opencode run --agent hypothesis --model "$TRIAGE_MODEL" < state/hypothesis-prompt.txt > artifacts/hypothesis-output.txt
-          python -m hunt_pipeline extract-leads --input artifacts/hypothesis-output.txt --output artifacts/hypothesis-raw.json
+          python -m hunt_pipeline model-run --agent hypothesis --mode hypothesis --prompt state/hypothesis-prompt.txt --output artifacts/hypothesis-raw.json --inventory state/inventory.json --delta state/delta.json --program testfire --rotation "$GITHUB_RUN_NUMBER" --attempts artifacts/model-attempts/hypothesis
           python -m hunt_pipeline import-leads --input artifacts/hypothesis-raw.json --inventory state/inventory.json --delta state/delta.json --program testfire --output artifacts/generated/leads.json
       - name: Ingest generated leads
         if: hashFiles('artifacts/generated/leads.json') != ''
@@ -98,15 +96,12 @@ jobs:
       - name: Run first triage model
         if: hashFiles('state/triage-prompt.txt') != '' && steps.model-config.outputs.enabled == 'true'
         run: |
-          timeout --kill-after=30s 20m opencode run --agent triage --model "$TRIAGE_MODEL" < state/triage-prompt.txt > artifacts/triage-a.txt
-          python -m hunt_pipeline extract-json --input artifacts/triage-a.txt --output artifacts/triage-a.raw.json
-          python -m hunt_pipeline annotate-model --input artifacts/triage-a.raw.json --model "$TRIAGE_MODEL" --output artifacts/triage-a.json
+          python -m hunt_pipeline model-run --agent triage --mode triage --prompt state/triage-prompt.txt --output artifacts/triage-a.json --rotation "$GITHUB_RUN_NUMBER" --attempts artifacts/model-attempts/triage-a
       - name: Run second triage model
-        if: hashFiles('state/triage-prompt.txt') != '' && vars.TRIAGE_MODEL_B != '' && steps.model-config.outputs.enabled == 'true'
+        if: hashFiles('state/triage-prompt.txt') != '' && steps.model-config.outputs.enabled == 'true'
         run: |
-          timeout --kill-after=30s 20m opencode run --agent triage --model "$TRIAGE_MODEL_B" < state/triage-prompt.txt > artifacts/triage-b.txt
-          python -m hunt_pipeline extract-json --input artifacts/triage-b.txt --output artifacts/triage-b.raw.json
-          python -m hunt_pipeline annotate-model --input artifacts/triage-b.raw.json --model "$TRIAGE_MODEL_B" --output artifacts/triage-b.json
+          exclude_model=$(python -c 'import json; print(json.load(open("artifacts/triage-a.json"))["model"])')
+          python -m hunt_pipeline model-run --agent triage --mode triage --prompt state/triage-prompt.txt --output artifacts/triage-b.json --rotation "$GITHUB_RUN_NUMBER" --exclude "$exclude_model" --attempts artifacts/model-attempts/triage-b
       - name: Build triage consensus
         if: hashFiles('artifacts/triage-a.json') != '' && hashFiles('artifacts/triage-b.json') != ''
         run: python -m hunt_pipeline consensus --input artifacts/triage-a.json --input artifacts/triage-b.json --output artifacts/triage-consensus.json
@@ -115,7 +110,7 @@ jobs:
         run: python -m hunt_pipeline --db data/hunt.sqlite ingest-verdicts --input artifacts/triage-consensus.json --model consensus
       - name: Store single-model fallback
         if: hashFiles('artifacts/triage-consensus.json') == '' && hashFiles('artifacts/triage-a.json') != ''
-        run: python -m hunt_pipeline --db data/hunt.sqlite ingest-verdicts --input artifacts/triage-a.json --model "$TRIAGE_MODEL"
+        run: python -m hunt_pipeline --db data/hunt.sqlite ingest-verdicts --input artifacts/triage-a.json --model "free-pool-fallback"
       - name: Write review summary
         if: always()
         run: |

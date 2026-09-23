@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,7 @@ from .delta import write_diff
 from .ledger import Ledger
 from .hypothesis import validate_generated_leads, write_prompt
 from .models import ValidationError, canonical
+from .model_pool import DEFAULT_FREE_POOL, parse_pool, run_model
 from .scope import ScopePolicy, load_policy, validate_config
 
 
@@ -22,7 +24,14 @@ def read_records(path: str) -> list[dict[str, Any]]:
     except json.JSONDecodeError:
         value = [json.loads(line) for line in text.splitlines() if line.strip()]
     if isinstance(value, dict):
-        value = value.get("records", [value])
+        if "records" in value:
+            value = value["records"]
+        elif "results" in value:
+            value = value["results"]
+        elif "leads" in value:
+            value = value["leads"]
+        else:
+            value = [value]
     if not isinstance(value, list):
         raise ValidationError("input must be a JSON array, object, or JSONL records")
     return value
@@ -166,6 +175,29 @@ def run_annotate(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_model_pool(args: argparse.Namespace) -> int:
+    pool_value = args.pool or os.environ.get("FREE_MODEL_POOL", "")
+    pool = parse_pool(pool_value) if pool_value else list(DEFAULT_FREE_POOL)
+    excluded = set(parse_pool(args.exclude)) if args.exclude else set()
+    selected = run_model(
+        agent=args.agent,
+        mode=args.mode,
+        prompt_path=args.prompt,
+        output_path=args.output,
+        pool=pool,
+        rotation=args.rotation,
+        timeout_seconds=args.timeout,
+        excluded=excluded,
+        health_path=args.health,
+        inventory_path=args.inventory,
+        delta_path=args.delta,
+        program=args.program,
+        attempt_dir=args.attempts,
+    )
+    print(json.dumps({"model": selected, "output": args.output}, indent=2))
+    return 0
+
+
 def run_collect(args: argparse.Namespace) -> int:
     policy = load_policy(args.config)
     urls = load_seed_urls(args.input, args.limit)
@@ -290,6 +322,22 @@ def build_parser():
     annotate_parser.add_argument("--output", required=True)
     annotate_parser.set_defaults(handler=run_annotate)
 
+    model_pool_parser = subparsers.add_parser("model-run")
+    model_pool_parser.add_argument("--agent", required=True)
+    model_pool_parser.add_argument("--mode", choices=("hypothesis", "triage"), required=True)
+    model_pool_parser.add_argument("--prompt", required=True)
+    model_pool_parser.add_argument("--output", required=True)
+    model_pool_parser.add_argument("--pool", default="")
+    model_pool_parser.add_argument("--rotation", type=int, default=0)
+    model_pool_parser.add_argument("--timeout", type=int, default=1200)
+    model_pool_parser.add_argument("--exclude", default="")
+    model_pool_parser.add_argument("--health", default="state/model-health.json")
+    model_pool_parser.add_argument("--inventory")
+    model_pool_parser.add_argument("--delta")
+    model_pool_parser.add_argument("--program", default="")
+    model_pool_parser.add_argument("--attempts", default="artifacts/model-attempts")
+    model_pool_parser.set_defaults(handler=run_model_pool)
+
     collect_parser = subparsers.add_parser("collect")
     collect_parser.add_argument("--config", required=True)
     collect_parser.add_argument("--input", required=True)
@@ -338,7 +386,7 @@ def main() -> int:
     args = parser.parse_args()
     try:
         return args.handler(args)
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
         parser.error(str(exc))
         return 2
 
