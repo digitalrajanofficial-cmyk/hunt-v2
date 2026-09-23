@@ -1,0 +1,81 @@
+name: Evidence-first model triage
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 */2 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: model-triage
+  cancel-in-progress: true
+
+jobs:
+  triage:
+    if: ${{ vars.TRIAGE_MODEL != '' && vars.OPENCODE_VERSION != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      PYTHONPATH: src
+      TRIAGE_MODEL: ${{ vars.TRIAGE_MODEL }}
+      TRIAGE_MODEL_B: ${{ vars.TRIAGE_MODEL_B }}
+      OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install OpenCode
+        run: npm install --global "opencode-ai@$OPENCODE_VERSION"
+      - name: Ingest inbox leads
+        if: hashFiles('inbox/*.json') != ''
+        run: python -m hunt_pipeline --db data/hunt.sqlite ingest-dir --config-dir config/programs --input-dir inbox
+      - name: Build triage prompt
+        run: |
+          if ! compgen -G 'inbox/*.json' > /dev/null; then
+            echo "No inbox records; skipping."
+            exit 0
+          fi
+          python -m hunt_pipeline prompt --inbox inbox --output triage-prompt.txt
+      - name: Run first isolated triage agent
+        if: hashFiles('triage-prompt.txt') != ''
+        run: |
+          timeout --kill-after=30s 20m opencode run --agent triage --model "$TRIAGE_MODEL" < triage-prompt.txt > triage-a.txt
+          python -m hunt_pipeline extract-json --input triage-a.txt --output triage-a.raw.json
+          python -m hunt_pipeline annotate-model --input triage-a.raw.json --model "$TRIAGE_MODEL" --output triage-a.json
+      - name: Run second isolated triage agent
+        if: hashFiles('triage-prompt.txt') != '' && vars.TRIAGE_MODEL_B != ''
+        run: |
+          timeout --kill-after=30s 20m opencode run --agent triage --model "$TRIAGE_MODEL_B" < triage-prompt.txt > triage-b.txt
+          python -m hunt_pipeline extract-json --input triage-b.txt --output triage-b.raw.json
+          python -m hunt_pipeline annotate-model --input triage-b.raw.json --model "$TRIAGE_MODEL_B" --output triage-b.json
+      - name: Build model consensus
+        if: hashFiles('triage-a.json') != '' && hashFiles('triage-b.json') != ''
+        run: python -m hunt_pipeline consensus --input triage-a.json --input triage-b.json --output triage-consensus.json
+      - name: Store consensus verdicts
+        if: hashFiles('triage-consensus.json') != ''
+        run: python -m hunt_pipeline --db data/hunt.sqlite ingest-verdicts --input triage-consensus.json --model consensus
+      - name: Store single-model fallback
+        if: hashFiles('triage-consensus.json') == '' && hashFiles('triage-a.json') != ''
+        run: python -m hunt_pipeline --db data/hunt.sqlite ingest-verdicts --input triage-a.json --model "$TRIAGE_MODEL"
+      - name: Upload triage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: triage-${{ github.run_id }}
+          path: |
+            triage-prompt.txt
+            triage-a.txt
+            triage-b.txt
+            triage-a.json
+            triage-b.json
+            triage-consensus.json
+          if-no-files-found: ignore

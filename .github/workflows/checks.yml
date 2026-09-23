@@ -1,0 +1,30 @@
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PYTHONPATH: src
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile
+        run: python -m compileall -q src
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
+      - name: Validate program configs
+        run: |
+          for config in config/programs/*.json; do
+            python -m hunt_pipeline validate-config --config "$config"
+          done
