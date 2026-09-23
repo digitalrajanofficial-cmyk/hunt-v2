@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from .approval import publish_approvals
 from .collector import collect, load_seed_urls, write_inventory
 from .consensus import load_model_result, write_consensus
 from .delta import write_diff
@@ -12,6 +13,7 @@ from .ledger import Ledger
 from .hypothesis import validate_generated_leads, write_prompt
 from .models import ValidationError, canonical
 from .model_pool import DEFAULT_FREE_POOL, parse_pool, run_model
+from .recon import import_recon, write_recon_output
 from .scope import ScopePolicy, load_policy, validate_config
 
 
@@ -175,6 +177,12 @@ def run_annotate(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_publish(args: argparse.Namespace) -> int:
+    results = publish_approvals(args.approvals, args.repo, args.execute)
+    print(json.dumps({"processed": len(results), "results": results}, indent=2))
+    return 0
+
+
 def run_model_pool(args: argparse.Namespace) -> int:
     pool_value = args.pool or os.environ.get("FREE_MODEL_POOL", "")
     pool = parse_pool(pool_value) if pool_value else list(DEFAULT_FREE_POOL)
@@ -195,6 +203,15 @@ def run_model_pool(args: argparse.Namespace) -> int:
         attempt_dir=args.attempts,
     )
     print(json.dumps({"model": selected, "output": args.output}, indent=2))
+    return 0
+
+
+def run_import_recon(args: argparse.Namespace) -> int:
+    policy = load_policy(args.config)
+    base = json.loads(Path(args.base).read_text(encoding="utf-8")) if args.base else None
+    inventory = import_recon(args.input_dir, policy, base, args.limit)
+    write_recon_output(args.output, inventory)
+    print(json.dumps({"assets": len(inventory["assets"]), "output": args.output}, indent=2))
     return 0
 
 
@@ -322,6 +339,12 @@ def build_parser():
     annotate_parser.add_argument("--output", required=True)
     annotate_parser.set_defaults(handler=run_annotate)
 
+    publish_parser = subparsers.add_parser("publish")
+    publish_parser.add_argument("--approvals", required=True)
+    publish_parser.add_argument("--repo", required=True)
+    publish_parser.add_argument("--execute", action="store_true")
+    publish_parser.set_defaults(handler=run_publish)
+
     model_pool_parser = subparsers.add_parser("model-run")
     model_pool_parser.add_argument("--agent", required=True)
     model_pool_parser.add_argument("--mode", choices=("hypothesis", "triage"), required=True)
@@ -337,6 +360,14 @@ def build_parser():
     model_pool_parser.add_argument("--program", default="")
     model_pool_parser.add_argument("--attempts", default="artifacts/model-attempts")
     model_pool_parser.set_defaults(handler=run_model_pool)
+
+    recon_parser = subparsers.add_parser("import-recon")
+    recon_parser.add_argument("--config", required=True)
+    recon_parser.add_argument("--input-dir", required=True)
+    recon_parser.add_argument("--base")
+    recon_parser.add_argument("--output", required=True)
+    recon_parser.add_argument("--limit", type=int, default=1000)
+    recon_parser.set_defaults(handler=run_import_recon)
 
     collect_parser = subparsers.add_parser("collect")
     collect_parser.add_argument("--config", required=True)

@@ -63,6 +63,11 @@ jobs:
             cp state/inventory.json state/previous-inventory.json
           fi
           python -m hunt_pipeline collect --config config/programs/testfire.json --input inputs/testfire.txt --output state/inventory.json --method GET --limit 1
+      - name: Merge passive recon exports
+        if: hashFiles('recon-input/*') != ''
+        run: python -m hunt_pipeline import-recon --config config/programs/testfire.json --input-dir recon-input --base state/inventory.json --output state/inventory.json --limit 1000
+      - name: Compute inventory delta
+        run: |
           if [ -f state/previous-inventory.json ]; then
             python -m hunt_pipeline delta --previous state/previous-inventory.json --current state/inventory.json --output state/delta.json
           else
