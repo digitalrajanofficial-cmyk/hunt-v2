@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from hunt_pipeline.recon_runner import recon_roots, run_safe_recon
+from hunt_pipeline.recon_runner import recon_roots, run_safe_recon, write_passive_urls
 from hunt_pipeline.scope import ScopePolicy
 
 
@@ -42,6 +42,31 @@ class ReconRunnerTests(unittest.TestCase):
                     count = write_filtered_subfinder(self.policy(), Path(directory))
             self.assertEqual(count, 0)
             self.assertEqual(Path(directory, "subfinder.txt").read_text(), "")
+
+    def test_passive_urls_are_scope_filtered(self):
+        with tempfile.TemporaryDirectory() as directory:
+            responses = iter(
+                [
+                    subprocess.CompletedProcess([], 0, "https://www.vr.fi/a\nhttps://outside.invalid/x\n", ""),
+                    subprocess.CompletedProcess([], 0, "https://www.vr.fi/b\n", ""),
+                ]
+            )
+
+            def fake_run(*args, **kwargs):
+                return next(responses)
+
+            def fake_run_command(command, output_path=None):
+                output_path.write_text("https://www.vr.fi/c\n", encoding="utf-8")
+
+            with patch("hunt_pipeline.recon_runner.require_tool", side_effect=lambda name: name):
+                with patch("hunt_pipeline.recon_runner.subprocess.run", side_effect=fake_run):
+                    with patch("hunt_pipeline.recon_runner.run_command", side_effect=fake_run_command):
+                        count = write_passive_urls(self.policy(), Path(directory))
+            self.assertEqual(count, 3)
+            self.assertEqual(
+                Path(directory, "urls.txt").read_text(),
+                "https://www.vr.fi/a\nhttps://www.vr.fi/b\nhttps://www.vr.fi/c\n",
+            )
 
 
 if __name__ == "__main__":

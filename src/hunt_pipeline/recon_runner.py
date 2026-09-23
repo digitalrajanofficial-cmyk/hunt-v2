@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .scope import ScopePolicy
+from .scope import ScopeError, ScopePolicy
 
 
 class ReconToolError(RuntimeError):
@@ -106,17 +106,57 @@ def run_httpx(input_path: Path, output_path: Path) -> int:
     return sum(1 for line in output_path.read_text(encoding="utf-8").splitlines() if line.strip()) if output_path.exists() else 0
 
 
-def run_safe_recon(policy: ScopePolicy, output_dir: str, run_dns: bool = True, run_http: bool = True) -> dict[str, Any]:
+def write_passive_urls(policy: ScopePolicy, output_dir: Path) -> int:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    urls = []
+    roots = recon_roots(policy)
+
+    def add_urls(lines: list[str]) -> None:
+        for line in lines:
+            url = line.strip()
+            if not url:
+                continue
+            try:
+                policy.validate_url(url)
+            except ScopeError:
+                continue
+            if url not in urls:
+                urls.append(url)
+
+    for name, command in (("gau", [require_tool("gau"), "--subs"]), ("waybackurls", [require_tool("waybackurls")])):
+        completed = subprocess.run(command, input="\n".join(roots), text=True, capture_output=True, check=False)
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout).strip()[:500]
+            raise ReconToolError(f"{name} failed: {detail}")
+        add_urls(completed.stdout.splitlines())
+
+    waymore = require_tool("waymore")
+    for root in roots:
+        raw = output_dir / f"waymore.{root}.raw.txt"
+        raw.unlink(missing_ok=True)
+        run_command([waymore, "-i", root, "-mode", "U", "-oU", str(raw)], raw)
+        if raw.exists():
+            add_urls(raw.read_text(encoding="utf-8").splitlines())
+        raw.unlink(missing_ok=True)
+
+    (output_dir / "urls.txt").write_text("\n".join(urls) + ("\n" if urls else ""), encoding="utf-8")
+    return len(urls)
+
+
+def run_safe_recon(policy: ScopePolicy, output_dir: str, run_dns: bool = True, run_http: bool = True, run_urls: bool = False) -> dict[str, Any]:
     root = Path(output_dir)
     root.mkdir(parents=True, exist_ok=True)
     subfinder_count = write_filtered_subfinder(policy, root)
     host_file = root / "subfinder.txt"
     dnsx_count = 0
     httpx_count = 0
+    passive_url_count = 0
     if run_dns and subfinder_count:
         dnsx_count = run_dnsx(host_file, root / "dnsx.jsonl")
     if run_http and subfinder_count:
         httpx_count = run_httpx(host_file, root / "httpx.jsonl")
+    if run_urls:
+        passive_url_count = write_passive_urls(policy, root)
     summary = {
         "program": policy.program,
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -124,7 +164,8 @@ def run_safe_recon(policy: ScopePolicy, output_dir: str, run_dns: bool = True, r
         "scope_filtered_subdomains": subfinder_count,
         "dnsx_records": dnsx_count,
         "httpx_records": httpx_count,
-        "tools": {"subfinder": True, "dnsx": run_dns, "httpx": run_http},
+        "passive_urls": passive_url_count,
+        "tools": {"subfinder": True, "dnsx": run_dns, "httpx": run_http, "gau": run_urls, "waybackurls": run_urls, "waymore": run_urls},
     }
     (root / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     return summary

@@ -1,0 +1,88 @@
+{
+  "default_passive": [
+    {
+      "name": "subfinder",
+      "source": "https://github.com/projectdiscovery/subfinder",
+      "mode": "passive",
+      "runner": true
+    },
+    {
+      "name": "dnsx",
+      "source": "https://github.com/projectdiscovery/dnsx",
+      "mode": "scoped-resolution",
+      "runner": true
+    },
+    {
+      "name": "httpx",
+      "source": "https://github.com/projectdiscovery/httpx",
+      "mode": "scoped-http",
+      "runner": true
+    },
+    {
+      "name": "gau",
+      "source": "https://github.com/lc/gau",
+      "mode": "passive-urls",
+      "runner": true
+    },
+    {
+      "name": "waybackurls",
+      "source": "https://github.com/tomnomnom/waybackurls",
+      "mode": "passive-urls",
+      "runner": true
+    },
+    {
+      "name": "waymore",
+      "source": "https://github.com/xnl-h4ck3r/waymore",
+      "mode": "passive-urls",
+      "runner": true,
+      "version": "8.9"
+    }
+  ],
+  "optional_active": [
+    {
+      "name": "katana",
+      "source": "https://github.com/projectdiscovery/katana",
+      "mode": "active-crawl"
+    },
+    {
+      "name": "nuclei",
+      "source": "https://github.com/projectdiscovery/nuclei",
+      "mode": "active-templates"
+    },
+    {
+      "name": "naabu",
+      "source": "https://github.com/projectdiscovery/naabu",
+      "mode": "active-port-scan"
+    },
+    {
+      "name": "ffuf",
+      "source": "https://github.com/ffuf/ffuf",
+      "mode": "active-content-discovery"
+    },
+    {
+      "name": "gitleaks",
+      "source": "https://github.com/gitleaks/gitleaks",
+      "mode": "source-secret-scan"
+    },
+    {
+      "name": "trufflehog",
+      "source": "https://github.com/trufflesecurity/trufflehog",
+      "mode": "source-secret-scan"
+    },
+    {
+      "name": "dalfox",
+      "source": "https://github.com/hahwul/dalfox",
+      "mode": "active-xss"
+    },
+    {
+      "name": "sqlmap",
+      "source": "https://github.com/sqlmapproject/sqlmap",
+      "mode": "active-injection"
+    },
+    {
+      "name": "nmap",
+      "source": "https://github.com/nmap/nmap",
+      "mode": "active-port-scan"
+    }
+  ]
+}

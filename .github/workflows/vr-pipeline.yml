@@ -46,20 +46,33 @@ jobs:
         with:
           node-version: "22"
       - name: Set up Go
-        if: vars.ENABLE_RECON == 'true'
+        if: vars.ENABLE_RECON == 'true' || vars.ENABLE_ACTIVE_RECON == 'true'
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.x'
+          go-version: '1.25.x'
       - name: Install scoped recon tools
         if: vars.ENABLE_RECON == 'true'
         run: |
           go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
           go install github.com/projectdiscovery/dnsx/cmd/dnsx@latest
           go install github.com/projectdiscovery/httpx/cmd/httpx@latest
+          go install github.com/lc/gau/v2/cmd/gau@latest
+          go install github.com/tomnomnom/waybackurls@latest
+          python -m pip install --disable-pip-version-check --no-cache-dir "waymore==8.9"
+          echo "$HOME/go/bin" >> "$GITHUB_PATH"
+      - name: Install optional active recon tools
+        if: vars.ENABLE_ACTIVE_RECON == 'true'
+        run: |
+          go install github.com/projectdiscovery/katana/cmd/katana@latest
+          go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+          go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest
+          go install github.com/ffuf/ffuf/v2@latest
+          go install github.com/zricethezav/gitleaks/v8@latest
+          go install github.com/trufflesecurity/trufflehog/v3@latest
           echo "$HOME/go/bin" >> "$GITHUB_PATH"
       - name: Run passive scoped recon
         if: vars.ENABLE_RECON == 'true'
-        run: python -m hunt_pipeline run-recon --config config/programs/vr.json --output recon-input
+        run: python -m hunt_pipeline run-recon --config config/programs/vr.json --output recon-input --passive-urls
       - name: Restore VR state
         uses: actions/cache/restore@v4
         with:

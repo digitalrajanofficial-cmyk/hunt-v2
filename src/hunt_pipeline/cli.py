@@ -212,7 +212,7 @@ def run_model_pool(args: argparse.Namespace) -> int:
 
 def run_recon(args: argparse.Namespace) -> int:
     policy = load_policy(args.config)
-    summary = run_safe_recon(policy, args.output, not args.skip_dns, not args.skip_http)
+    summary = run_safe_recon(policy, args.output, not args.skip_dns, not args.skip_http, args.passive_urls)
     print(json.dumps(summary, indent=2))
     return 0
 
@@ -377,6 +377,7 @@ def build_parser():
     run_recon_parser.add_argument("--output", required=True)
     run_recon_parser.add_argument("--skip-dns", action="store_true")
     run_recon_parser.add_argument("--skip-http", action="store_true")
+    run_recon_parser.add_argument("--passive-urls", action="store_true")
     run_recon_parser.set_defaults(handler=run_recon)
 
     recon_parser = subparsers.add_parser("import-recon")
