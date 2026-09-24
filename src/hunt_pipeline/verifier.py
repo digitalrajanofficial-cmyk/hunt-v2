@@ -45,12 +45,16 @@ def analyze_jwt(token: str) -> dict[str, Any]:
         return {"valid": False}
 
 
+def _probe_method(policy: ScopePolicy) -> str:
+    return "GET" if "GET" in policy.allowed_methods else policy.allowed_methods[0]
+
+
 def check_cors(policy: ScopePolicy, url: str, extra_headers: dict[str, str] | None = None) -> dict[str, Any] | None:
     try:
         headers = {"Origin": "https://evil.example.test"}
         if extra_headers:
             headers.update(extra_headers)
-        probe = policy.probe(url, method="GET", headers=headers)
+        probe = policy.probe(url, method=_probe_method(policy), headers=headers)
         lower = {k.lower(): v for k, v in probe.get("headers", {}).items()}
         acao = lower.get("access-control-allow-origin", "")
         acac = lower.get("access-control-allow-credentials", "")
@@ -68,7 +72,7 @@ def check_graphql_introspection(policy: ScopePolicy, url: str, extra_headers: di
     if "graphql" not in url.lower() and "gql" not in url.lower():
         return None
     try:
-        probe = policy.probe(url, method="GET", headers=extra_headers)
+        probe = policy.probe(url, method=_probe_method(policy), headers=extra_headers)
         body_hint = str(probe.get("headers", {}).get("content-type", ""))
         return {"status": probe.get("status"), "content_type": body_hint[:80], "probe": "introspection-ready"}
     except Exception:
@@ -113,7 +117,7 @@ def verify_lead(
         except Exception:
             pass
     try:
-        probe = policy.probe(asset, method="GET", headers=headers or None)
+        probe = policy.probe(asset, method=_probe_method(policy), headers=headers or None)
         probe_headers = {k.lower(): v for k, v in probe.get("headers", {}).items()}
         probe_headers.update({k.lower(): v for k, v in headers.items() if k.lower() not in probe_headers})
         result["status"] = probe.get("status")
