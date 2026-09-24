@@ -84,6 +84,7 @@ def make_hunt_workflow(template_root: Path, program: str, display_name: str) -> 
     text = text.replace("config/programs/vr.json", f"config/program.json")
     text = text.replace("inputs/vr.txt", f"inputs/seed.txt")
     text = text.replace("inputs/vr", "inputs/seed")
+    text = text.replace("--limit 1", "--limit 20")
     text = re.sub(r'\bvr\b', program, text)
     text = re.sub(r'\bVR\b', display_name.upper(), text)
     text = re.sub(r'vr-hunt', f'{program}-hunt', text)
