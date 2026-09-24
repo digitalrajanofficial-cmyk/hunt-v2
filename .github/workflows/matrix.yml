@@ -1,0 +1,298 @@
+name: Matrix hunt
+
+on:
+  workflow_dispatch:
+    inputs:
+      program:
+        description: "Single program to run (empty = all enabled)"
+        required: false
+        type: string
+  schedule:
+    - cron: "17 */6 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: matrix-hunt
+  cancel-in-progress: true
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Discover enabled programs
+        id: set-matrix
+        run: |
+          if [ -n "${{ inputs.program }}" ]; then
+            echo "matrix=[\"${{ inputs.program }}\"]" >> "$GITHUB_OUTPUT"
+          else
+            programs=$(python3 -c "
+          import json, pathlib
+          progs=[]
+          for p in pathlib.Path('config/programs').glob('*.json'):
+              try:
+                  data=json.load(open(p))
+                  if data.get('enabled'):
+                      progs.append(p.stem)
+              except Exception:
+                  pass
+          import json as j
+          print(j.dumps(progs))
+          ")
+            echo "matrix=$programs" >> "$GITHUB_OUTPUT"
+          fi
+          cat "$GITHUB_OUTPUT"
+
+  hunt:
+    needs: discover
+    if: ${{ needs.discover.outputs.matrix != '[]' && vars.FREE_MODEL_POOL != '' && vars.OPENCODE_VERSION != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        program: ${{ fromJson(needs.discover.outputs.matrix) }}
+    env:
+      PYTHONPATH: src
+      OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION }}
+      FREE_MODEL_POOL: ${{ vars.FREE_MODEL_POOL }}
+      OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+      PROGRAM: ${{ matrix.program }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check model configuration
+        id: model-config
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+        run: |
+          if [ -n "$OPENCODE_API_KEY" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Set up Go
+        if: vars.ENABLE_RECON == 'true' || vars.ENABLE_ACTIVE_RECON == 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+      - name: Install scoped recon tools
+        if: vars.ENABLE_RECON == 'true'
+        run: |
+          go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
+          go install github.com/projectdiscovery/dnsx/cmd/dnsx@latest
+          go install github.com/projectdiscovery/httpx/cmd/httpx@latest
+          go install github.com/lc/gau/v2/cmd/gau@latest
+          go install github.com/tomnomnom/waybackurls@latest
+          python -m pip install --disable-pip-version-check --no-cache-dir "waymore==8.9"
+          echo "$HOME/go/bin" >> "$GITHUB_PATH"
+      - name: Install optional active Go tools
+        if: vars.ENABLE_ACTIVE_RECON == 'true'
+        run: |
+          go install github.com/projectdiscovery/katana/cmd/katana@latest
+          go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+          go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest
+          go install github.com/ffuf/ffuf/v2@latest
+          go install github.com/tomnomnom/gf@latest
+          go install github.com/devploit/nomore403@latest
+          go install github.com/zricethezav/gitleaks/v8@latest
+          go install github.com/trufflesecurity/trufflehog/v3@latest
+          echo "$HOME/go/bin" >> "$GITHUB_PATH"
+      - name: Install optional active Python tools
+        if: vars.ENABLE_ACTIVE_RECON == 'true'
+        run: |
+          git clone --depth 1 --branch 1.4.3 https://github.com/r0oth3x49/ghauri.git "$RUNNER_TEMP/ghauri"
+          python -m pip install --disable-pip-version-check --no-cache-dir "$RUNNER_TEMP/ghauri"
+          git clone --depth 1 https://github.com/MichaelStott/CRLF-Injection-Scanner.git "$RUNNER_TEMP/crlf-scanner"
+          python -m pip install --disable-pip-version-check --no-cache-dir "$RUNNER_TEMP/crlf-scanner"
+      - name: Install optional SQLMap checkout
+        if: vars.ENABLE_ACTIVE_RECON == 'true'
+        run: |
+          git clone --depth 1 https://github.com/sqlmapproject/sqlmap.git "$RUNNER_TEMP/sqlmap"
+          mkdir -p "$RUNNER_TEMP/bin"
+          printf '#!/bin/sh\nexec python "%s/sqlmap.py" "$@"\n' "$RUNNER_TEMP" > "$RUNNER_TEMP/bin/sqlmap"
+          chmod +x "$RUNNER_TEMP/bin/sqlmap"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          echo "SQLMAP_HOME=$RUNNER_TEMP/sqlmap" >> "$GITHUB_ENV"
+      - name: Run passive scoped recon
+        if: vars.ENABLE_RECON == 'true'
+        run: |
+          mkdir -p recon-input
+          python -m hunt_pipeline run-recon --config config/programs/${PROGRAM}.json --output recon-input --passive-urls || true
+      - name: Restore state and knowledge
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            state
+            data
+            knowledge
+          key: hunt-state-${{ matrix.program }}-${{ github.run_id }}
+          restore-keys: |
+            hunt-state-${{ matrix.program }}-
+      - name: Install OpenCode
+        run: npm install --global "opencode-ai@$OPENCODE_VERSION"
+      - name: Collect inventory
+        run: |
+          mkdir -p state artifacts/generated data
+          if [ -f state/${PROGRAM}-inventory.json ]; then
+            cp state/${PROGRAM}-inventory.json state/inventory.json
+            cp state/inventory.json state/previous-inventory.json || true
+          elif [ -f state/inventory.json ]; then
+            cp state/inventory.json state/previous-inventory.json || true
+          fi
+          python -m hunt_pipeline collect --config config/programs/${PROGRAM}.json --input inputs/${PROGRAM}.txt --output state/inventory.json --method GET --limit 20 || python -m hunt_pipeline collect --config config/programs/${PROGRAM}.json --input inputs/${PROGRAM}.txt --output state/inventory.json --method HEAD --limit 1
+          cp state/inventory.json state/${PROGRAM}-inventory.json
+      - name: Merge recon exports
+        if: hashFiles('recon-input/*') != ''
+        run: python -m hunt_pipeline import-recon --config config/programs/${PROGRAM}.json --input-dir recon-input --base state/inventory.json --output state/inventory.json --limit 1000 || true
+      - name: Compute inventory delta
+        run: |
+          if [ -f state/previous-inventory.json ]; then
+            python -m hunt_pipeline delta --previous state/previous-inventory.json --current state/inventory.json --output state/delta.json
+          else
+            python -c "import json; json.dump({'added': [], 'removed': [], 'changed': [], 'counts': {'added': 0, 'removed': 0, 'changed': 0}}, open('state/delta.json', 'w'), indent=2)"
+          fi
+      - name: Check for meaningful changes
+        id: changes
+        run: |
+          if [ ! -f state/previous-inventory.json ] || python -c "import json; value=json.load(open('state/delta.json')); raise SystemExit(0 if any(value['counts'].values()) else 1)"; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Advance state for inventory
+        if: hashFiles('state/inventory.json') != ''
+        run: |
+          python -m hunt_pipeline state-transition --program ${PROGRAM} --event inventory_collected --base state || true
+          if python -c "import json; d=json.load(open('state/delta.json')); raise SystemExit(0 if any(d.get('counts',{}).values()) else 1)"; then
+            python -m hunt_pipeline state-transition --program ${PROGRAM} --event delta_found --base state || true
+          else
+            python -m hunt_pipeline state-transition --program ${PROGRAM} --event no_delta --base state || true
+          fi
+      - name: Enrich inventory
+        if: hashFiles('state/inventory.json') != ''
+        run: python -m hunt_pipeline enrich --inventory state/inventory.json --output state/inventory.json
+      - name: Build hypothesis prompt with RAG
+        if: hashFiles('state/inventory.json') != ''
+        run: python -m hunt_pipeline hypothesis-prompt --inventory state/inventory.json --delta state/delta.json --output state/hypothesis-prompt.txt --program ${PROGRAM} --knowledge-base knowledge
+      - name: Generate candidate leads
+        if: hashFiles('state/hypothesis-prompt.txt') != '' && steps.changes.outputs.changed == 'true' && steps.model-config.outputs.enabled == 'true'
+        run: |
+          python -m hunt_pipeline model-run --agent hypothesis --mode hypothesis --prompt state/hypothesis-prompt.txt --output artifacts/${PROGRAM}-hypothesis-raw.json --inventory state/inventory.json --delta state/delta.json --program ${PROGRAM} --rotation "$GITHUB_RUN_NUMBER" --attempts artifacts/model-attempts/${PROGRAM}-hypothesis
+          python -m hunt_pipeline import-leads --input artifacts/${PROGRAM}-hypothesis-raw.json --inventory state/inventory.json --delta state/delta.json --program ${PROGRAM} --output artifacts/generated/${PROGRAM}-leads.json
+      - name: Ingest leads
+        if: hashFiles('artifacts/generated/${PROGRAM}-leads.json') != ''
+        run: python -m hunt_pipeline --db data/hunt.sqlite ingest --config config/programs/${PROGRAM}.json --input artifacts/generated/${PROGRAM}-leads.json
+      - name: Advance state and verify
+        if: hashFiles('artifacts/generated/${PROGRAM}-leads.json') != ''
+        env:
+          OOB_DOMAIN: ${{ vars.OOB_DOMAIN }}
+          INTERACTSH_DOMAIN: ${{ vars.INTERACTSH_DOMAIN }}
+          VR_AUTH_TOKEN: ${{ secrets.VR_AUTH_TOKEN }}
+        run: |
+          python -m hunt_pipeline state-transition --program ${PROGRAM} --event leads_generated --base state || true
+          if [ -f config/auth/${PROGRAM}.json ]; then AUTH_FLAG="--auth-config config/auth/${PROGRAM}.json"; else AUTH_FLAG=""; fi
+          if [ -n "${OOB_DOMAIN:-}" ] || [ -n "${INTERACTSH_DOMAIN:-}" ]; then OOB_FLAG="--use-oob"; else OOB_FLAG=""; fi
+          python -m hunt_pipeline verify --config config/programs/${PROGRAM}.json --input artifacts/generated/${PROGRAM}-leads.json --output artifacts/${PROGRAM}-verification.json $AUTH_FLAG $OOB_FLAG || true
+          if [ -f artifacts/${PROGRAM}-verification.json ]; then python -m hunt_pipeline state-transition --program ${PROGRAM} --event verified --base state || true; fi
+      - name: Poll OOB callbacks
+        if: hashFiles('artifacts/*-verification.json') != ''
+        env:
+          INTERACTSH_TOKEN: ${{ secrets.INTERACTSH_TOKEN }}
+          INTERACTSH_POLL_URL: ${{ secrets.INTERACTSH_POLL_URL }}
+        run: |
+          for f in artifacts/*-verification.json; do
+            if python -c "import json; data=json.load(open('$f')); raise SystemExit(0 if any(x.get('oob_token') for x in data) else 1)"; then
+              for token in $(python -c "import json; print(' '.join(x.get('oob_token','') for x in json.load(open('$f')) if x.get('oob_token')) )"); do
+                python -m hunt_pipeline oob-check --program ${PROGRAM} --token "$token" --base state || true
+              done
+            fi
+          done
+      - name: Build triage prompt
+        if: hashFiles('artifacts/generated/${PROGRAM}-leads.json') != ''
+        run: |
+          if python -c "import json; raise SystemExit(0 if len(json.load(open('artifacts/generated/${PROGRAM}-leads.json'))) else 1)"; then
+            mkdir -p artifacts/generated
+            cp artifacts/generated/${PROGRAM}-leads.json artifacts/generated/leads.json || true
+            python -m hunt_pipeline prompt --inbox artifacts/generated --output state/triage-prompt.txt
+          fi
+      - name: Run triage models
+        if: hashFiles('state/triage-prompt.txt') != '' && steps.model-config.outputs.enabled == 'true'
+        run: |
+          python -m hunt_pipeline model-run --agent triage --mode triage --prompt state/triage-prompt.txt --output artifacts/${PROGRAM}-triage-a.json --rotation "$GITHUB_RUN_NUMBER" --attempts artifacts/model-attempts/${PROGRAM}-triage-a
+          exclude_model=$(python -c 'import json; print(json.load(open("artifacts/${PROGRAM}-triage-a.json"))["model"])')
+          python -m hunt_pipeline model-run --agent triage --mode triage --prompt state/triage-prompt.txt --output artifacts/${PROGRAM}-triage-b.json --rotation "$GITHUB_RUN_NUMBER" --exclude "$exclude_model" --attempts artifacts/model-attempts/${PROGRAM}-triage-b
+      - name: Build triage consensus
+        if: hashFiles('artifacts/${PROGRAM}-triage-a.json') != '' && hashFiles('artifacts/${PROGRAM}-triage-b.json') != ''
+        run: python -m hunt_pipeline consensus --input artifacts/${PROGRAM}-triage-a.json --input artifacts/${PROGRAM}-triage-b.json --output artifacts/${PROGRAM}-triage-consensus.json
+      - name: Store verdicts
+        if: hashFiles('artifacts/${PROGRAM}-triage-consensus.json') != ''
+        run: python -m hunt_pipeline --db data/hunt.sqlite ingest-verdicts --input artifacts/${PROGRAM}-triage-consensus.json --model consensus
+      - name: Store fallback
+        if: hashFiles('artifacts/${PROGRAM}-triage-consensus.json') == '' && hashFiles('artifacts/${PROGRAM}-triage-a.json') != ''
+        run: python -m hunt_pipeline --db data/hunt.sqlite ingest-verdicts --input artifacts/${PROGRAM}-triage-a.json --model free-pool-fallback
+      - name: Update knowledge from triage
+        if: hashFiles('artifacts/${PROGRAM}-triage-consensus.json') != '' || hashFiles('artifacts/${PROGRAM}-triage-a.json') != ''
+        run: |
+          python - <<'PY' || true
+          import json, pathlib
+          from hunt_pipeline.knowledge import add_rejected, add_learning
+          prog="${{ matrix.program }}"
+          path = pathlib.Path(f"artifacts/{prog}-triage-consensus.json")
+          if not path.exists():
+              path = pathlib.Path(f"artifacts/{prog}-triage-a.json")
+          try:
+              data=json.loads(path.read_text())
+              for item in data.get("results", []):
+                  if item.get("verdict")=="INVALID" and item.get("gate"):
+                      add_rejected(prog, "UNKNOWN", item.get("lead_id",""), item.get("reason","")[:200], "knowledge")
+                  if item.get("verdict")=="VALID":
+                      add_learning(prog, f"ACCEPTED {item.get('lead_id')}: {item.get('reason','')[:200]}", "knowledge")
+          except Exception as e:
+              print(e)
+          PY
+          python -m hunt_pipeline state-transition --program ${{ matrix.program }} --event verdicts_recorded --base state || true
+      - name: Feedback report
+        if: hashFiles('data/hunt.sqlite') != ''
+        run: |
+          python -m hunt_pipeline --db data/hunt.sqlite feedback-report --output artifacts/${{ matrix.program }}-feedback-report.md --program ${{ matrix.program }} || true
+          python -m hunt_pipeline state-transition --program ${{ matrix.program }} --event knowledge_updated --base state || true
+      - name: Save state and knowledge
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            state
+            data
+            knowledge
+          key: hunt-state-${{ matrix.program }}-${{ github.run_id }}
+      - name: Upload review artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: matrix-${{ matrix.program }}-${{ github.run_id }}
+          path: |
+            artifacts
+            state
+            data/hunt.sqlite
+            recon-input
+            knowledge
+          if-no-files-found: ignore

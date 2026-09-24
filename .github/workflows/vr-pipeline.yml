@@ -137,6 +137,9 @@ jobs:
           else
             python -m hunt_pipeline state-transition --program vr --event no_delta --base state || true
           fi
+      - name: Enrich inventory with tech/param signals
+        if: hashFiles('state/inventory.json') != ''
+        run: python -m hunt_pipeline enrich --inventory state/inventory.json --output state/inventory.json
       - name: Build VR hypothesis prompt with RAG context
         if: hashFiles('state/inventory.json') != ''
         run: python -m hunt_pipeline hypothesis-prompt --inventory state/inventory.json --delta state/delta.json --output state/hypothesis-prompt.txt --program vr --knowledge-base knowledge

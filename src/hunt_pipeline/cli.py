@@ -17,6 +17,7 @@ from .recon import import_recon, write_recon_output
 from .recon_runner import run_safe_recon
 from .scope import ScopePolicy, load_policy, validate_config
 from .auth import AuthConfig, AuthProvider
+from .enrich import write_enriched
 from .feedback import compute_metrics, update_knowledge_from_metrics, write_feedback_report
 from .knowledge import add_learning, add_rejected, build_rag_prompt, load_knowledge, retrieve_context, save_knowledge
 from .oob import check_token, cleanup_expired, generate_token
@@ -327,6 +328,13 @@ def run_collect(args: argparse.Namespace) -> int:
     return 1 if args.fail_on_error and failed else 0
 
 
+def run_enrich(args: argparse.Namespace) -> int:
+    inventory = json.loads(Path(args.inventory).read_text(encoding="utf-8"))
+    enriched = write_enriched(inventory, args.output)
+    print(json.dumps({"assets": len(enriched.get("assets", [])), "output": args.output, "enrichment": enriched.get("enrichment", {})}, indent=2))
+    return 0
+
+
 def run_hypothesis_prompt(args: argparse.Namespace) -> int:
     inventory = json.loads(Path(args.inventory).read_text(encoding="utf-8"))
     delta = json.loads(Path(args.delta).read_text(encoding="utf-8")) if args.delta else None
@@ -507,6 +515,11 @@ def build_parser():
     collect_parser.add_argument("--limit", type=int, default=100)
     collect_parser.add_argument("--fail-on-error", action="store_true")
     collect_parser.set_defaults(handler=run_collect)
+
+    enrich_parser = subparsers.add_parser("enrich")
+    enrich_parser.add_argument("--inventory", required=True)
+    enrich_parser.add_argument("--output", required=True)
+    enrich_parser.set_defaults(handler=run_enrich)
 
     hypothesis_prompt_parser = subparsers.add_parser("hypothesis-prompt")
     hypothesis_prompt_parser.add_argument("--inventory", required=True)
