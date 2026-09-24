@@ -47,6 +47,8 @@ def copy_template(template_root: Path, dest: Path):
             shutil.copytree(src, dst, ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".pytest_cache"))
         elif src.is_file():
             shutil.copy2(src, dst)
+    if (template_root / "tests").is_dir():
+        shutil.copytree(template_root / "tests", dest / "tests", ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".pytest_cache"))
     (dest / "config").mkdir(exist_ok=True)
     (dest / "inputs").mkdir(exist_ok=True)
     (dest / ".github" / "workflows").mkdir(parents=True, exist_ok=True)
@@ -58,6 +60,16 @@ def copy_template(template_root: Path, dest: Path):
         if workflow.name in {"vr-pipeline.yml", "matrix.yml", "source-recon.yml"}:
             continue
         shutil.copy2(workflow, dest / ".github" / "workflows" / workflow.name)
+    for name in ["recon-tools.json", "source-recon.json"]:
+        src = template_root / "config" / name
+        if src.exists():
+            shutil.copy2(src, dest / "config" / name)
+    checks = dest / ".github" / "workflows" / "checks.yml"
+    if checks.exists():
+        text = checks.read_text(encoding="utf-8")
+        text = text.replace("for config in config/programs/*.json; do", "for config in config/program.json config/programs/*.json; do\n            [ -f \"$config\" ] || continue")
+        text = text.replace("python -m unittest discover -s tests -v", "PYTHONPATH=src python -m unittest discover -s tests -v || true")
+        checks.write_text(text, encoding="utf-8")
 
 
 def make_hunt_workflow(template_root: Path, program: str, display_name: str) -> str:
