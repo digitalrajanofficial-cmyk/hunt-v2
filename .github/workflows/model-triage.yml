@@ -45,6 +45,11 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - name: Install Claude-BugHunter skills for OpenCode
+        run: |
+          git clone --depth 1 https://github.com/elementalsouls/Claude-BugHunter.git /tmp/Claude-BugHunter
+          bash /tmp/Claude-BugHunter/scripts/install.sh --agents || true
+          echo "Installed skills: $(ls ~/.agents/skills 2>/dev/null | wc -l)"
       - name: Install OpenCode
         run: npm install --global "opencode-ai@$OPENCODE_VERSION"
       - name: Ingest inbox leads

@@ -101,6 +101,12 @@ jobs:
           key: hunt-state-vr-${{ github.run_id }}
           restore-keys: |
             hunt-state-vr-
+      - name: Install Claude-BugHunter skills for OpenCode
+        run: |
+          git clone --depth 1 https://github.com/elementalsouls/Claude-BugHunter.git /tmp/Claude-BugHunter
+          bash /tmp/Claude-BugHunter/scripts/install.sh --agents || true
+          echo "Installed skills: $(ls ~/.agents/skills 2>/dev/null | wc -l)"
+          ls ~/.agents/skills 2>/dev/null | head -n 20 || true
       - name: Install OpenCode
         run: npm install --global "opencode-ai@$OPENCODE_VERSION"
       - name: Collect one scoped VR HEAD

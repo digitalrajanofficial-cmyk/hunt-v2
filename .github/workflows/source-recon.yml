@@ -59,6 +59,12 @@ jobs:
           else
             echo "enabled=false" >> "$GITHUB_OUTPUT"
           fi
+      - name: Install Claude-BugHunter skills for OpenCode
+        if: steps.findings.outputs.available == 'true' && steps.model-config.outputs.enabled == 'true'
+        run: |
+          git clone --depth 1 https://github.com/elementalsouls/Claude-BugHunter.git /tmp/Claude-BugHunter
+          bash /tmp/Claude-BugHunter/scripts/install.sh --agents || true
+          echo "Installed skills: $(ls ~/.agents/skills 2>/dev/null | wc -l)"
       - name: Install OpenCode
         if: steps.findings.outputs.available == 'true' && steps.model-config.outputs.enabled == 'true'
         run: npm install --global "opencode-ai@$OPENCODE_VERSION"
