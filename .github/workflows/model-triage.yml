@@ -79,6 +79,14 @@ jobs:
       - name: Store single-model fallback
         if: hashFiles('triage-consensus.json') == '' && hashFiles('triage-a.json') != ''
         run: python -m hunt_pipeline --db data/hunt.sqlite ingest-verdicts --input triage-a.json --model free-pool-fallback
+      - name: Notify Discord on VALID
+        if: hashFiles('triage-consensus.json') != '' || hashFiles('triage-a.json') != ''
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          INPUT="triage-consensus.json"
+          if [ ! -f "$INPUT" ]; then INPUT="triage-a.json"; fi
+          python -m hunt_pipeline notify-discord --program triage --input "$INPUT" --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" || true
       - name: Upload triage artifact
         if: always()
         uses: actions/upload-artifact@v4

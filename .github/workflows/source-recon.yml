@@ -77,6 +77,12 @@ jobs:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         run: |
           python -m hunt_pipeline model-run --agent source --mode source --prompt artifacts/source-recon/source-prompt.txt --source-findings artifacts/source-recon/source-findings.json --output artifacts/source-recon/source-analysis.json --rotation "$GITHUB_RUN_NUMBER" --attempts artifacts/source-recon/model-attempts
+      - name: Notify Discord on VALID source findings
+        if: hashFiles('artifacts/source-recon/source-analysis.json') != ''
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          python -m hunt_pipeline notify-discord --program vr --input artifacts/source-recon/source-analysis.json --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" || true
       - name: Write source summary
         if: always()
         run: |

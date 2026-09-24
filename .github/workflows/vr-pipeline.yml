@@ -236,6 +236,16 @@ jobs:
               print(f"knowledge update skipped: {e}")
           PY
           python -m hunt_pipeline state-transition --program vr --event verdicts_recorded --base state || true
+      - name: Notify Discord on VALID
+        if: hashFiles('artifacts/triage-consensus.json') != '' || hashFiles('artifacts/triage-a.json') != ''
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          INPUT="artifacts/triage-consensus.json"
+          if [ ! -f "$INPUT" ]; then INPUT="artifacts/triage-a.json"; fi
+          if [ -f "$INPUT" ]; then
+            python -m hunt_pipeline notify-discord --program vr --input "$INPUT" --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" || true
+          fi
       - name: Generate feedback report and update knowledge
         if: hashFiles('data/hunt.sqlite') != ''
         run: |

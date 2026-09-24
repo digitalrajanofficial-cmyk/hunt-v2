@@ -20,6 +20,7 @@ from .auth import AuthConfig, AuthProvider
 from .enrich import write_enriched
 from .feedback import compute_metrics, update_knowledge_from_metrics, write_feedback_report
 from .knowledge import add_learning, add_rejected, build_rag_prompt, load_knowledge, retrieve_context, save_knowledge
+from .notify import notify_from_file
 from .oob import check_token, cleanup_expired, generate_token
 from .source_recon import build_source_prompt, load_source_config, run_source_recon
 from .state_machine import advance_from_inventory, advance_from_leads, advance_from_triage, advance_from_verification, load_state, transition
@@ -305,6 +306,16 @@ def run_oob_cleanup(args: argparse.Namespace) -> int:
 def run_feedback_report(args: argparse.Namespace) -> int:
     metrics = write_feedback_report(args.db, args.output, args.program)
     print(json.dumps(metrics, indent=2, sort_keys=True))
+    return 0
+
+
+def run_notify_discord(args: argparse.Namespace) -> int:
+    webhook_url = args.webhook_url or os.environ.get("DISCORD_WEBHOOK_URL", "")
+    if not webhook_url:
+        print(json.dumps({"skipped": True, "reason": "no webhook url"}))
+        return 0
+    result = notify_from_file(webhook_url, args.program, args.input, args.run_url)
+    print(json.dumps(result, indent=2))
     return 0
 
 
@@ -613,6 +624,13 @@ def build_parser():
     feedback_report_parser.add_argument("--output", required=True)
     feedback_report_parser.add_argument("--program", default="")
     feedback_report_parser.set_defaults(handler=run_feedback_report)
+
+    notify_parser = subparsers.add_parser("notify-discord")
+    notify_parser.add_argument("--program", required=True)
+    notify_parser.add_argument("--input", required=True)
+    notify_parser.add_argument("--run-url", default="")
+    notify_parser.add_argument("--webhook-url", default="")
+    notify_parser.set_defaults(handler=run_notify_discord)
 
     return parser
 

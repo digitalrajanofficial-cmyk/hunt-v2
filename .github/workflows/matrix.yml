@@ -255,7 +255,7 @@ jobs:
         if: hashFiles('artifacts/${PROGRAM}-triage-consensus.json') == '' && hashFiles('artifacts/${PROGRAM}-triage-a.json') != ''
         run: python -m hunt_pipeline --db data/hunt.sqlite ingest-verdicts --input artifacts/${PROGRAM}-triage-a.json --model free-pool-fallback
       - name: Update knowledge from triage
-        if: hashFiles('artifacts/${PROGRAM}-triage-consensus.json') != '' || hashFiles('artifacts/${PROGRAM}-triage-a.json') != ''
+        if: hashFiles('artifacts/${{ matrix.program }}-triage-consensus.json') != '' || hashFiles('artifacts/${{ matrix.program }}-triage-a.json') != ''
         run: |
           python - <<'PY' || true
           import json, pathlib
@@ -275,6 +275,16 @@ jobs:
               print(e)
           PY
           python -m hunt_pipeline state-transition --program ${{ matrix.program }} --event verdicts_recorded --base state || true
+      - name: Notify Discord on VALID
+        if: hashFiles('artifacts/${{ matrix.program }}-triage-consensus.json') != '' || hashFiles('artifacts/${{ matrix.program }}-triage-a.json') != ''
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          INPUT="artifacts/${{ matrix.program }}-triage-consensus.json"
+          if [ ! -f "$INPUT" ]; then INPUT="artifacts/${{ matrix.program }}-triage-a.json"; fi
+          if [ -f "$INPUT" ]; then
+            python -m hunt_pipeline notify-discord --program ${{ matrix.program }} --input "$INPUT" --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" || true
+          fi
       - name: Feedback report
         if: hashFiles('data/hunt.sqlite') != ''
         run: |
