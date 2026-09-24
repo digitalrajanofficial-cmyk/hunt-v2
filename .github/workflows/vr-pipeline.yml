@@ -91,12 +91,13 @@ jobs:
       - name: Run passive scoped recon
         if: vars.ENABLE_RECON == 'true'
         run: python -m hunt_pipeline run-recon --config config/programs/vr.json --output recon-input --passive-urls
-      - name: Restore VR state
+      - name: Restore VR state and knowledge
         uses: actions/cache/restore@v4
         with:
           path: |
             state
             data
+            knowledge
           key: hunt-state-vr-${{ github.run_id }}
           restore-keys: |
             hunt-state-vr-
@@ -127,9 +128,18 @@ jobs:
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
-      - name: Build VR hypothesis prompt
+      - name: Advance state for inventory
         if: hashFiles('state/inventory.json') != ''
-        run: python -m hunt_pipeline hypothesis-prompt --inventory state/inventory.json --delta state/delta.json --output state/hypothesis-prompt.txt
+        run: |
+          python -m hunt_pipeline state-transition --program vr --event inventory_collected --base state || true
+          if python -c "import json; d=json.load(open('state/delta.json')); raise SystemExit(0 if any(d.get('counts',{}).values()) else 1)"; then
+            python -m hunt_pipeline state-transition --program vr --event delta_found --base state || true
+          else
+            python -m hunt_pipeline state-transition --program vr --event no_delta --base state || true
+          fi
+      - name: Build VR hypothesis prompt with RAG context
+        if: hashFiles('state/inventory.json') != ''
+        run: python -m hunt_pipeline hypothesis-prompt --inventory state/inventory.json --delta state/delta.json --output state/hypothesis-prompt.txt --program vr --knowledge-base knowledge
       - name: Generate VR candidate leads
         if: hashFiles('state/hypothesis-prompt.txt') != '' && steps.changes.outputs.changed == 'true' && steps.model-config.outputs.enabled == 'true'
         run: |
@@ -138,6 +148,39 @@ jobs:
       - name: Ingest VR leads
         if: hashFiles('artifacts/generated/leads.json') != ''
         run: python -m hunt_pipeline --db data/hunt.sqlite ingest --config config/programs/vr.json --input artifacts/generated/leads.json
+      - name: Advance state for leads and verify
+        if: hashFiles('artifacts/generated/leads.json') != ''
+        env:
+          OOB_DOMAIN: ${{ vars.OOB_DOMAIN }}
+          INTERACTSH_DOMAIN: ${{ vars.INTERACTSH_DOMAIN }}
+          VR_AUTH_TOKEN: ${{ secrets.VR_AUTH_TOKEN }}
+        run: |
+          python -m hunt_pipeline state-transition --program vr --event leads_generated --base state || true
+          if [ -f config/auth/vr.json ]; then
+            AUTH_FLAG="--auth-config config/auth/vr.json"
+          else
+            AUTH_FLAG=""
+          fi
+          if [ -n "${OOB_DOMAIN:-}" ] || [ -n "${INTERACTSH_DOMAIN:-}" ]; then
+            OOB_FLAG="--use-oob"
+          else
+            OOB_FLAG=""
+          fi
+          python -m hunt_pipeline verify --config config/programs/vr.json --input artifacts/generated/leads.json --output artifacts/verification.json $AUTH_FLAG $OOB_FLAG || true
+          if [ -f artifacts/verification.json ]; then
+            python -m hunt_pipeline state-transition --program vr --event verified --base state || true
+          fi
+      - name: Poll OOB callbacks
+        if: hashFiles('artifacts/verification.json') != ''
+        env:
+          INTERACTSH_TOKEN: ${{ secrets.INTERACTSH_TOKEN }}
+          INTERACTSH_POLL_URL: ${{ secrets.INTERACTSH_POLL_URL }}
+        run: |
+          if [ -f artifacts/verification.json ] && python -c "import json; data=json.load(open('artifacts/verification.json')); raise SystemExit(0 if any(x.get('oob_token') for x in data) else 1)"; then
+            for token in $(python -c "import json; print(' '.join(x.get('oob_token','') for x in json.load(open('artifacts/verification.json')) if x.get('oob_token')) )"); do
+              python -m hunt_pipeline oob-check --program vr --token "$token" --base state || true
+            done
+          fi
       - name: Build VR triage prompt
         if: hashFiles('artifacts/generated/leads.json') != ''
         run: |
@@ -161,13 +204,42 @@ jobs:
       - name: Store VR single-model fallback
         if: hashFiles('artifacts/triage-consensus.json') == '' && hashFiles('artifacts/triage-a.json') != ''
         run: python -m hunt_pipeline --db data/hunt.sqlite ingest-verdicts --input artifacts/triage-a.json --model free-pool-fallback
-      - name: Save VR state
+      - name: Update knowledge from triage
+        if: hashFiles('artifacts/triage-consensus.json') != '' || hashFiles('artifacts/triage-a.json') != ''
+        run: |
+          if [ -f artifacts/triage-consensus.json ]; then
+            INPUT=artifacts/triage-consensus.json
+          else
+            INPUT=artifacts/triage-a.json
+          fi
+          python - <<'PY' || true
+          import json
+          from pathlib import Path
+          from hunt_pipeline.knowledge import add_rejected, add_learning
+          try:
+              data = json.loads(Path("artifacts/triage-consensus.json" if Path("artifacts/triage-consensus.json").exists() else "artifacts/triage-a.json").read_text())
+              for item in data.get("results", []):
+                  if item.get("verdict") == "INVALID" and item.get("gate"):
+                      add_rejected("vr", "UNKNOWN", item.get("lead_id",""), item.get("reason","")[:200], "knowledge")
+                  if item.get("verdict") == "VALID":
+                      add_learning("vr", f"ACCEPTED {item.get('lead_id')}: {item.get('reason','')[:200]}", "knowledge")
+          except Exception as e:
+              print(f"knowledge update skipped: {e}")
+          PY
+          python -m hunt_pipeline state-transition --program vr --event verdicts_recorded --base state || true
+      - name: Generate feedback report and update knowledge
+        if: hashFiles('data/hunt.sqlite') != ''
+        run: |
+          python -m hunt_pipeline feedback-report --output artifacts/feedback-report.md --program vr || true
+          python -m hunt_pipeline state-transition --program vr --event knowledge_updated --base state || true
+      - name: Save VR state and knowledge
         if: always()
         uses: actions/cache/save@v4
         with:
           path: |
             state
             data
+            knowledge
           key: hunt-state-vr-${{ github.run_id }}
       - name: Upload VR review artifacts
         if: always()
@@ -179,4 +251,7 @@ jobs:
             state
             data/hunt.sqlite
             recon-input
+            knowledge
+            artifacts/verification.json
+            artifacts/feedback-report.md
           if-no-files-found: ignore

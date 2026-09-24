@@ -16,7 +16,13 @@ from .model_pool import DEFAULT_FREE_POOL, parse_pool, run_model
 from .recon import import_recon, write_recon_output
 from .recon_runner import run_safe_recon
 from .scope import ScopePolicy, load_policy, validate_config
+from .auth import AuthConfig, AuthProvider
+from .feedback import compute_metrics, update_knowledge_from_metrics, write_feedback_report
+from .knowledge import add_learning, add_rejected, build_rag_prompt, load_knowledge, retrieve_context, save_knowledge
+from .oob import check_token, cleanup_expired, generate_token
 from .source_recon import build_source_prompt, load_source_config, run_source_recon
+from .state_machine import advance_from_inventory, advance_from_leads, advance_from_triage, advance_from_verification, load_state, transition
+from .verifier import verify_leads
 
 
 def read_records(path: str) -> list[dict[str, Any]]:
@@ -234,6 +240,73 @@ def run_source_prompt(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_knowledge_get(args: argparse.Namespace) -> int:
+    data = load_knowledge(args.program, args.base)
+    context = retrieve_context(args.program, args.query, args.base, args.limit)
+    print(json.dumps({"program": args.program, "context": context, "knowledge": data}, indent=2))
+    return 0
+
+
+def run_knowledge_add(args: argparse.Namespace) -> int:
+    if args.rejected_class:
+        data = add_rejected(args.program, args.rejected_class, args.asset or "*", args.reason or "manual", args.base)
+    else:
+        data = add_learning(args.program, args.text, args.base)
+    print(json.dumps({"program": args.program, "updated_at": data.get("updated_at")}, indent=2))
+    return 0
+
+
+def run_state_get(args: argparse.Namespace) -> int:
+    data = load_state(args.program, args.base)
+    print(json.dumps(data, indent=2, sort_keys=True))
+    return 0
+
+
+def run_state_transition(args: argparse.Namespace) -> int:
+    metadata = json.loads(args.metadata) if args.metadata else None
+    data = transition(args.program, args.event, args.base, metadata)
+    print(json.dumps(data, indent=2, sort_keys=True))
+    return 0
+
+
+def run_verify(args: argparse.Namespace) -> int:
+    policy = load_policy(args.config)
+    leads = json.loads(Path(args.input).read_text(encoding="utf-8"))
+    if isinstance(leads, dict) and isinstance(leads.get("leads"), list):
+        leads = leads["leads"]
+    auth_provider = None
+    if args.auth_config:
+        auth_cfg = json.loads(Path(args.auth_config).read_text(encoding="utf-8")).get("auth")
+        auth_provider = AuthProvider(AuthConfig.from_dict(auth_cfg))
+    results = verify_leads(leads, policy, auth_provider, args.use_oob, policy.program, args.output)
+    print(json.dumps({"verified": len(results), "output": args.output}, indent=2))
+    return 0
+
+
+def run_oob_generate(args: argparse.Namespace) -> int:
+    result = generate_token(args.program, args.domain, args.base)
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+def run_oob_check(args: argparse.Namespace) -> int:
+    result = check_token(args.program, args.token, args.base)
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+def run_oob_cleanup(args: argparse.Namespace) -> int:
+    removed = cleanup_expired(args.program, args.base, args.ttl_hours)
+    print(json.dumps({"removed": removed}, indent=2))
+    return 0
+
+
+def run_feedback_report(args: argparse.Namespace) -> int:
+    metrics = write_feedback_report(args.db, args.output, args.program)
+    print(json.dumps(metrics, indent=2, sort_keys=True))
+    return 0
+
+
 def run_import_recon(args: argparse.Namespace) -> int:
     policy = load_policy(args.config)
     base = json.loads(Path(args.base).read_text(encoding="utf-8")) if args.base else None
@@ -257,7 +330,16 @@ def run_collect(args: argparse.Namespace) -> int:
 def run_hypothesis_prompt(args: argparse.Namespace) -> int:
     inventory = json.loads(Path(args.inventory).read_text(encoding="utf-8"))
     delta = json.loads(Path(args.delta).read_text(encoding="utf-8")) if args.delta else None
-    write_prompt(args.output, inventory, delta)
+    knowledge_context = None
+    if args.program:
+        try:
+            from .knowledge import retrieve_context
+
+            query = " ".join([str(a.get("url", "")) for a in inventory.get("assets", [])[:3]]) or args.program
+            knowledge_context = retrieve_context(args.program, query, args.knowledge_base, 5)
+        except Exception:
+            knowledge_context = None
+    write_prompt(args.output, inventory, delta, knowledge_context)
     print(json.dumps({"output": args.output, "assets": len(inventory.get("assets", []))}))
     return 0
 
@@ -430,6 +512,8 @@ def build_parser():
     hypothesis_prompt_parser.add_argument("--inventory", required=True)
     hypothesis_prompt_parser.add_argument("--delta")
     hypothesis_prompt_parser.add_argument("--output", required=True)
+    hypothesis_prompt_parser.add_argument("--program", default="")
+    hypothesis_prompt_parser.add_argument("--knowledge-base", default="knowledge")
     hypothesis_prompt_parser.set_defaults(handler=run_hypothesis_prompt)
 
     extract_leads_parser = subparsers.add_parser("extract-leads")
@@ -457,6 +541,66 @@ def build_parser():
     feedback_parser.add_argument("--notes", default="")
     feedback_parser.add_argument("--bounty-amount", type=int)
     feedback_parser.set_defaults(handler=run_feedback)
+
+    knowledge_get_parser = subparsers.add_parser("knowledge-get")
+    knowledge_get_parser.add_argument("--program", required=True)
+    knowledge_get_parser.add_argument("--query", default="")
+    knowledge_get_parser.add_argument("--base", default="knowledge")
+    knowledge_get_parser.add_argument("--limit", type=int, default=5)
+    knowledge_get_parser.set_defaults(handler=run_knowledge_get)
+
+    knowledge_add_parser = subparsers.add_parser("knowledge-add")
+    knowledge_add_parser.add_argument("--program", required=True)
+    knowledge_add_parser.add_argument("--text", default="")
+    knowledge_add_parser.add_argument("--rejected-class", default="")
+    knowledge_add_parser.add_argument("--asset", default="")
+    knowledge_add_parser.add_argument("--reason", default="")
+    knowledge_add_parser.add_argument("--base", default="knowledge")
+    knowledge_add_parser.set_defaults(handler=run_knowledge_add)
+
+    state_get_parser = subparsers.add_parser("state-get")
+    state_get_parser.add_argument("--program", required=True)
+    state_get_parser.add_argument("--base", default="state")
+    state_get_parser.set_defaults(handler=run_state_get)
+
+    state_transition_parser = subparsers.add_parser("state-transition")
+    state_transition_parser.add_argument("--program", required=True)
+    state_transition_parser.add_argument("--event", required=True)
+    state_transition_parser.add_argument("--base", default="state")
+    state_transition_parser.add_argument("--metadata", default="")
+    state_transition_parser.set_defaults(handler=run_state_transition)
+
+    verify_parser = subparsers.add_parser("verify")
+    verify_parser.add_argument("--config", required=True)
+    verify_parser.add_argument("--input", required=True)
+    verify_parser.add_argument("--output", required=True)
+    verify_parser.add_argument("--auth-config")
+    verify_parser.add_argument("--use-oob", action="store_true")
+    verify_parser.set_defaults(handler=run_verify)
+
+    oob_generate_parser = subparsers.add_parser("oob-generate")
+    oob_generate_parser.add_argument("--program", required=True)
+    oob_generate_parser.add_argument("--domain", default="")
+    oob_generate_parser.add_argument("--base", default="state")
+    oob_generate_parser.set_defaults(handler=run_oob_generate)
+
+    oob_check_parser = subparsers.add_parser("oob-check")
+    oob_check_parser.add_argument("--program", required=True)
+    oob_check_parser.add_argument("--token", required=True)
+    oob_check_parser.add_argument("--base", default="state")
+    oob_check_parser.set_defaults(handler=run_oob_check)
+
+    oob_cleanup_parser = subparsers.add_parser("oob-cleanup")
+    oob_cleanup_parser.add_argument("--program", required=True)
+    oob_cleanup_parser.add_argument("--base", default="state")
+    oob_cleanup_parser.add_argument("--ttl-hours", type=int, default=72)
+    oob_cleanup_parser.set_defaults(handler=run_oob_cleanup)
+
+    feedback_report_parser = subparsers.add_parser("feedback-report")
+    feedback_report_parser.add_argument("--output", required=True)
+    feedback_report_parser.add_argument("--program", default="")
+    feedback_report_parser.set_defaults(handler=run_feedback_report)
+
     return parser
 
 

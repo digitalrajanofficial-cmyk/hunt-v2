@@ -1,0 +1,6 @@
+{
+  "auth": {
+    "type": "bearer",
+    "env_var": "VR_AUTH_TOKEN"
+  }
+}

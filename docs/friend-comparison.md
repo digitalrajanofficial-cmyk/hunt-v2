@@ -24,6 +24,12 @@ Reference implementation: [riteshekbote/threema-hunt](https://github.com/riteshe
 | Repeat efficiency | Full context is repeatedly processed | Meaningful delta detection ignores observation timestamps and skips unchanged model calls |
 | Recon execution | Recon jobs and public-repository scans | Opt-in subfinder → scope filter → rate-limited dnsx/httpx producer plus allowlisted, sanitized GitHub source-recon workflow |
 | Publication | Automated issue synchronization | Model output cannot publish; only explicitly approved JSON can create an issue |
+| RAG context | Ad-hoc prior hypothesis text | Structured `knowledge/<program>.json` + keyword retrieval into prompts |
+| Hypothesis verification | Passive GET/HEAD probes | Scope-checked verifier with rate limiting, auth-aware, OOB-aware |
+| State | Implicit phase via git history | Explicit state machine persisted in `state/<program>-state.json` |
+| Authenticated evidence | No standardized auth handling | `auth.py` provider reads secret env vars only for `AUTH_HELPED` leads |
+| OOB validation | No OOB harness | `oob.py` token lifecycle with Interactsh poll support |
+| Feedback | Manual triage count | `feedback.py` metrics + automatic knowledge updates |
 | Target breadth | Many per-program repositories | One reusable pipeline with per-program configuration |
 
 ## Public-source recon parity
@@ -50,11 +56,17 @@ The reference prompt describes an eight-step analyst loop and a seven-question t
 - Missing or false gate decisions are rejected by schema validation rather than being silently accepted.
 - The model pool retries invalid output and failed free models before the lead is discarded.
 
+## Recently implemented (2026-09)
+
+- RAG context via `knowledge.py` — persistent learnings/rejected store, keyword retrieval, injected into hypothesis prompt as `<knowledge>`.
+- Hypothesis verification via `verifier.py` — scope-checked, rate-limited, read-only probes with optional authenticated headers and OOB token generation.
+- State machine via `state_machine.py` — `INIT → RECON → SURFACE → HYPOTHESIS → VERIFY → TRIAGE → LEARN` with `state/<program>-state.json`.
+- Authenticated evidence via `auth.py` — per-program `config/auth/<program>.json` referencing a secret env var, only used for `AUTH_HELPED` leads.
+- OOB validation via `oob.py` — token generation, `state/<program>-oob.json` store, Interactsh poll support, 72h TTL cleanup.
+- Feedback loop via `feedback.py` — ledger metrics, `feedback-report` markdown, automatic knowledge updates for repeated INVALID and high HOLD rates.
+
 ## Remaining parity work
 
-- Add authenticated test-account workflows with secret-backed session handling.
-- Add OOB evidence adapters for approved test cases.
-- Add report quality metrics and payout feedback loops.
 - Add multi-program matrix execution from one configuration set.
-- Add automatic read-only verification for model-proposed endpoints.
-- Add cross-cycle knowledge/learning aggregation without exposing raw secrets.
+- Add JS/source-map analysis to source recon.
+- Add OOB-fed verification (auto-inject OOB URL into SSRF probe parameters).

@@ -168,7 +168,7 @@ class ScopePolicy:
             parsed_addresses.append(str(parsed))
         return sorted(parsed_addresses)[0]
 
-    def probe(self, url: str, method: str = "GET") -> dict[str, Any]:
+    def probe(self, url: str, method: str = "GET", headers: dict[str, str] | None = None) -> dict[str, Any]:
         method = method.upper()
         if method not in self.allowed_methods:
             raise ScopeError(f"method {method} is not allowed")
@@ -192,16 +192,21 @@ class ScopePolicy:
             )
         else:
             connection = _PinnedHTTPConnection(address, port=port, timeout=self.probe_timeout_seconds)
+        base_headers: dict[str, str] = {
+            "Host": host_header,
+            "User-Agent": "hunt-v2-safe-probe/0.1",
+            "Accept": "*/*",
+            "Connection": "close",
+        }
+        if headers:
+            for key, value in headers.items():
+                if key.lower() not in {"host", "content-length"}:
+                    base_headers[key] = value
         try:
             connection.request(
                 method,
                 target,
-                headers={
-                    "Host": host_header,
-                    "User-Agent": "hunt-v2-safe-probe/0.1",
-                    "Accept": "*/*",
-                    "Connection": "close",
-                },
+                headers=base_headers,
             )
             response = connection.getresponse()
             body = response.read(self.max_response_bytes + 1)
